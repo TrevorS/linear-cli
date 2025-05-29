@@ -151,26 +151,36 @@ fn download_schema(api_key: Option<String>) -> Result<()> {
         anyhow::bail!("Failed to download schema: {}", response.status());
     }
 
-    let schema_response: serde_json::Value = response.json()
-        .context("Failed to parse schema response")?;
+    let schema_response: serde_json::Value =
+        response.json().context("Failed to parse schema response")?;
 
     // Extract just the schema portion
-    let schema = schema_response.get("data")
+    let schema = schema_response
+        .get("data")
         .context("No data field in response")?;
 
     // Create the output directory if it doesn't exist
     let output_dir = Path::new("../linear-sdk/graphql");
-    fs::create_dir_all(output_dir)
-        .context("Failed to create output directory")?;
+    fs::create_dir_all(output_dir).context("Failed to create output directory")?;
 
     // Write the schema to file
     let output_path = output_dir.join("schema.json");
-    let formatted_schema = serde_json::to_string_pretty(schema)
-        .context("Failed to format schema")?;
-    
-    fs::write(&output_path, formatted_schema)
-        .context("Failed to write schema file")?;
+    let formatted_schema =
+        serde_json::to_string_pretty(schema).context("Failed to format schema")?;
+
+    fs::write(&output_path, formatted_schema).context("Failed to write schema file")?;
 
     println!("Schema downloaded successfully to {:?}", output_path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_parsing() {
+        // Test that CLI can be parsed without panicking
+        let _ = Cli::try_parse_from(&["xtask", "schema", "--api-key", "test"]);
+    }
 }

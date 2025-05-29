@@ -14,3 +14,19 @@ pub struct Viewer;
 pub fn hello() -> &'static str {
     "Linear SDK"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hello() {
+        assert_eq!(hello(), "Linear SDK");
+    }
+
+    #[test]
+    fn test_viewer_query_builds() {
+        // This test verifies that the GraphQL code generation worked
+        let _query = Viewer::build_query(viewer::Variables {});
+    }
+}
