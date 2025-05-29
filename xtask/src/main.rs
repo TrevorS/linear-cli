@@ -181,6 +181,6 @@ mod tests {
     #[test]
     fn test_cli_parsing() {
         // Test that CLI can be parsed without panicking
-        let _ = Cli::try_parse_from(&["xtask", "schema", "--api-key", "test"]);
+        let _ = Cli::try_parse_from(["xtask", "schema", "--api-key", "test"]);
     }
 }
