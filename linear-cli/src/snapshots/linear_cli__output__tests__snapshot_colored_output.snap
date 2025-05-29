@@ -1,0 +1,9 @@
+---
+source: linear-cli/src/output.rs
+expression: result
+---
+ Issue   | Title                       | Status      | Assignee    
+---------+-----------------------------+-------------+-------------
+ ENG-100 | Fix authentication bug      | [2mTodo[0m        | Alice Smith 
+ ENG-101 | Implement user profile page | [33mIn Progress[39m | [2mUnassigned[0m  
+ ENG-102 | Update documentation        | [32mDone[39m        | Bob Johnson

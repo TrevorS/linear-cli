@@ -6,10 +6,19 @@ use clap::{Parser, Subcommand};
 use linear_sdk::LinearClient;
 use std::env;
 
+mod output;
+mod types;
+
+use crate::output::{OutputFormat, TableFormatter};
+
 #[derive(Parser)]
 #[command(name = "linear")]
 #[command(about = "A CLI for Linear", long_about = None)]
 struct Cli {
+    /// Disable colored output
+    #[arg(long, global = true)]
+    no_color: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -44,6 +53,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let client = LinearClient::new(api_key)?;
 
+    // Determine if color should be used
+    let use_color = !cli.no_color
+        && env::var("NO_COLOR").is_err()
+        && env::var("TERM").unwrap_or_default() != "dumb";
+
     match cli.command {
         Commands::Issues { limit } => {
             let issues = client.list_issues(limit).await?;
@@ -51,13 +65,9 @@ async fn main() -> Result<()> {
             if issues.is_empty() {
                 println!("No issues found.");
             } else {
-                for issue in issues {
-                    let assignee = issue.assignee.unwrap_or_else(|| "Unassigned".to_string());
-                    println!(
-                        "{}: {} ({}) - {}",
-                        issue.identifier, issue.title, issue.status, assignee
-                    );
-                }
+                let formatter = TableFormatter::new(use_color);
+                let output = formatter.format_issues(&issues)?;
+                println!("{}", output);
             }
         }
     }
