@@ -88,6 +88,10 @@ async fn main() -> Result<()> {
             team,
         } => {
             let filters = if assignee.is_some() || status.is_some() || team.is_some() {
+                if !json {
+                    eprintln!("⚠️  Note: Filters are not yet implemented. Showing all issues.");
+                    eprintln!();
+                }
                 Some(IssueFilters {
                     assignee,
                     status,
