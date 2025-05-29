@@ -38,7 +38,11 @@ pub fn mock_issues_response() -> serde_json::Value {
                             "name": "Todo"
                         },
                         "assignee": {
+                            "id": "user-1",
                             "name": "Alice"
+                        },
+                        "team": {
+                            "key": "ENG"
                         }
                     },
                     {
@@ -49,7 +53,11 @@ pub fn mock_issues_response() -> serde_json::Value {
                             "name": "In Progress"
                         },
                         "assignee": {
+                            "id": "user-2",
                             "name": "Bob"
+                        },
+                        "team": {
+                            "key": "DESIGN"
                         }
                     },
                     {
@@ -59,7 +67,10 @@ pub fn mock_issues_response() -> serde_json::Value {
                         "state": {
                             "name": "Done"
                         },
-                        "assignee": null
+                        "assignee": null,
+                        "team": {
+                            "key": "QA"
+                        }
                     }
                 ]
             }

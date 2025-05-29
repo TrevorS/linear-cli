@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use linear_sdk::LinearClient;
+use linear_sdk::{IssueFilters, LinearClient};
 use std::env;
 
 mod output;
@@ -38,6 +38,18 @@ enum Commands {
         /// Pretty print JSON output
         #[arg(long, requires = "json")]
         pretty: bool,
+
+        /// Filter by assignee (use "me" for yourself)
+        #[arg(long)]
+        assignee: Option<String>,
+
+        /// Filter by status (case insensitive)
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Filter by team
+        #[arg(long)]
+        team: Option<String>,
     },
 }
 
@@ -71,8 +83,25 @@ async fn main() -> Result<()> {
             limit,
             json,
             pretty,
+            assignee,
+            status,
+            team,
         } => {
-            let issues = client.list_issues(limit).await?;
+            let filters = if assignee.is_some() || status.is_some() || team.is_some() {
+                if !json {
+                    eprintln!("⚠️  Note: Filters are not yet implemented. Showing all issues.");
+                    eprintln!();
+                }
+                Some(IssueFilters {
+                    assignee,
+                    status,
+                    team,
+                })
+            } else {
+                None
+            };
+
+            let issues = client.list_issues_filtered(limit, filters).await?;
 
             if issues.is_empty() && !json {
                 println!("No issues found.");
@@ -129,6 +158,9 @@ mod tests {
                 limit,
                 json,
                 pretty,
+                assignee: _,
+                status: _,
+                team: _,
             } => {
                 assert_eq!(limit, 20);
                 assert!(!json);
@@ -143,6 +175,9 @@ mod tests {
                 limit,
                 json,
                 pretty,
+                assignee: _,
+                status: _,
+                team: _,
             } => {
                 assert_eq!(limit, 5);
                 assert!(!json);
@@ -157,6 +192,9 @@ mod tests {
                 limit,
                 json,
                 pretty,
+                assignee: _,
+                status: _,
+                team: _,
             } => {
                 assert_eq!(limit, 10);
                 assert!(!json);
@@ -171,6 +209,9 @@ mod tests {
                 limit,
                 json,
                 pretty,
+                assignee: _,
+                status: _,
+                team: _,
             } => {
                 assert_eq!(limit, 20);
                 assert!(json);
@@ -185,6 +226,9 @@ mod tests {
                 limit,
                 json,
                 pretty,
+                assignee: _,
+                status: _,
+                team: _,
             } => {
                 assert_eq!(limit, 20);
                 assert!(json);
@@ -195,6 +239,81 @@ mod tests {
         // Test pretty flag requires json (should fail)
         let result = Cli::try_parse_from(["linear", "issues", "--pretty"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_filter_arguments() {
+        use clap::Parser;
+
+        // Test assignee filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--assignee", "me"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(status, None);
+                assert_eq!(team, None);
+            }
+        }
+
+        // Test status filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--status", "done"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, None);
+                assert_eq!(status, Some("done".to_string()));
+                assert_eq!(team, None);
+            }
+        }
+
+        // Test team filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--team", "ENG"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, None);
+                assert_eq!(status, None);
+                assert_eq!(team, Some("ENG".to_string()));
+            }
+        }
+
+        // Test combined filters
+        let cli = Cli::try_parse_from([
+            "linear",
+            "issues",
+            "--assignee",
+            "me",
+            "--status",
+            "in progress",
+            "--team",
+            "ENG",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(status, Some("in progress".to_string()));
+                assert_eq!(team, Some("ENG".to_string()));
+            }
+        }
     }
 
     #[test]
@@ -210,6 +329,8 @@ mod tests {
                 title: "Test issue".to_string(),
                 status: "Todo".to_string(),
                 assignee: Some("Alice".to_string()),
+                assignee_id: Some("user-1".to_string()),
+                team: Some("ENG".to_string()),
             },
             Issue {
                 id: "2".to_string(),
@@ -217,6 +338,8 @@ mod tests {
                 title: "Another issue".to_string(),
                 status: "Done".to_string(),
                 assignee: None,
+                assignee_id: None,
+                team: Some("ENG".to_string()),
             },
         ];
 

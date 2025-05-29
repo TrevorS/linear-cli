@@ -16,6 +16,12 @@ First, set your Linear API key:
 export LINEAR_API_KEY=lin_api_xxxxx
 ```
 
+For development, you can also create a `.env` file:
+```bash
+echo 'LINEAR_API_KEY=your_api_key_here' > .env
+source scripts/setup-env.sh  # Load the environment
+```
+
 Then use the CLI:
 
 ```bash

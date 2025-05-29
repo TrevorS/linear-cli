@@ -124,7 +124,9 @@ mod tests {
             identifier: identifier.to_string(),
             title: title.to_string(),
             status: status.to_string(),
-            assignee,
+            assignee: assignee.clone(),
+            assignee_id: assignee.map(|_| format!("user-{}", identifier)),
+            team: Some("TEST".to_string()),
         }
     }
 
