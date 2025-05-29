@@ -25,6 +25,9 @@ pub enum LinearError {
 
     #[error("Timeout: Request took too long to complete")]
     Timeout,
+
+    #[error("OAuth configuration error")]
+    OAuthConfig,
 }
 
 impl LinearError {
@@ -37,6 +40,9 @@ impl LinearError {
             LinearError::Network(_) => Some("Check your internet connection and try again"),
             LinearError::RateLimit => Some("Wait a moment before making another request"),
             LinearError::Timeout => Some("Try again or check your network connection"),
+            LinearError::OAuthConfig => Some(
+                "Set up OAuth by creating an application at https://linear.app/settings/api/applications/new\n\nCallback URL: http://localhost:8089/callback\nThen set LINEAR_OAUTH_CLIENT_ID environment variable with your Client ID",
+            ),
             _ => None,
         }
     }
@@ -103,6 +109,10 @@ mod tests {
             LinearError::GraphQL("Field not found".to_string()).to_string(),
             "GraphQL error: Field not found"
         );
+        assert_eq!(
+            LinearError::OAuthConfig.to_string(),
+            "OAuth configuration error"
+        );
     }
 
     #[test]
@@ -116,6 +126,13 @@ mod tests {
             Some("Please check the issue identifier format (e.g., ENG-123)")
         );
         assert_eq!(LinearError::GraphQL("test".to_string()).help_text(), None);
+        assert!(LinearError::OAuthConfig.help_text().is_some());
+        assert!(
+            LinearError::OAuthConfig
+                .help_text()
+                .unwrap()
+                .contains("linear.app/settings/api/applications/new")
+        );
     }
 
     #[test]

@@ -77,6 +77,17 @@ The project uses Linear's GraphQL API. Key considerations:
 - GraphQL schema-driven development
 - Type-safe query generation using graphql_client
 
+### OAuth Setup
+
+To use OAuth authentication:
+
+1. Create a Linear OAuth application at https://linear.app/settings/api/applications/new
+2. Set the callback URL to: `http://localhost:8089/callback`
+3. Configure your client ID using either:
+   - Environment variable: `export LINEAR_OAUTH_CLIENT_ID=your-client-id`
+   - Command line flag: `linear login --client-id your-client-id`
+4. Run `linear login` to authenticate
+
 ### API Validation Findings (from linear-api-spike/)
 - **Authentication**: Use `Authorization: <API_KEY>` header (no Bearer prefix)
 - **Schema**: Introspection is available - see `linear-api-spike/schema.json`
