@@ -1,0 +1,40 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "8a5f3b2e-4c1d-4a7e-9f3b-6d8e2a4c7b9f",
+          "identifier": "ENG-123",
+          "title": "Fix authentication bug in login flow",
+          "description": "Users are unable to login when their email contains special characters",
+          "state": {
+            "id": "started",
+            "name": "In Progress",
+            "type": "started"
+          },
+          "priority": 1,
+          "createdAt": "2024-01-15T10:30:00.000Z",
+          "updatedAt": "2024-01-16T14:22:00.000Z"
+        },
+        {
+          "id": "7c4e2d1a-8b3f-4c9e-a2d7-5f8c1b6e9a3d",
+          "identifier": "ENG-124",
+          "title": "Add dark mode support",
+          "description": "Implement dark mode theme across the application",
+          "state": {
+            "id": "backlog",
+            "name": "Backlog",
+            "type": "backlog"
+          },
+          "priority": 3,
+          "createdAt": "2024-01-14T09:15:00.000Z",
+          "updatedAt": "2024-01-14T09:15:00.000Z"
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "WyJjcmVhdGVkQXQiLCJjZGM5YjdlMC00YzY4LTQyOTEtOGJmZS02NzhhYjQwMGQ5NmEiXQ=="
+      }
+    }
+  }
+}

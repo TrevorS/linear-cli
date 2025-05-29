@@ -1,0 +1,11 @@
+{
+  "errors": [
+    {
+      "message": "Authentication required",
+      "extensions": {
+        "code": "UNAUTHENTICATED",
+        "userPresentableMessage": "Please provide a valid API key"
+      }
+    }
+  ]
+}
