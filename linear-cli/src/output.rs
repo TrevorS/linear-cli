@@ -4,6 +4,7 @@
 use anyhow::Result;
 use linear_sdk::Issue;
 use owo_colors::OwoColorize;
+use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
 use crate::types::IssueStatus;
@@ -80,8 +81,9 @@ impl OutputFormat for TableFormatter {
             })
             .collect();
 
-        let table = Table::new(rows).to_string();
-        Ok(table)
+        let mut table = Table::new(rows);
+        table.with(Style::psql());
+        Ok(table.to_string())
     }
 }
 
