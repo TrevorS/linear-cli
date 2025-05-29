@@ -6,6 +6,10 @@ use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::time::Duration;
 
+// Custom scalar types used by Linear's GraphQL schema
+type DateTimeOrDuration = String;
+type TimelessDateOrDuration = String;
+
 #[cfg(test)]
 pub mod test_helpers;
 
@@ -35,6 +39,8 @@ pub struct Issue {
     pub title: String,
     pub status: String,
     pub assignee: Option<String>,
+    pub assignee_id: Option<String>,
+    pub team: Option<String>,
 }
 
 pub struct LinearClient {
@@ -43,7 +49,47 @@ pub struct LinearClient {
     _api_key: String,
 }
 
+pub struct IssueFilters {
+    pub assignee: Option<String>,
+    pub status: Option<String>,
+    pub team: Option<String>,
+}
+
 impl LinearClient {
+    async fn build_issue_filter(
+        &self,
+        _filters: &IssueFilters,
+    ) -> Result<Option<list_issues::IssueFilter>> {
+        // For now, let's disable filtering until we can implement it properly
+        // This allows us to test the basic CLI structure
+        Ok(None)
+    }
+
+    #[allow(dead_code)]
+    fn normalize_status(status: &str) -> String {
+        match status.to_lowercase().as_str() {
+            "todo" => "Todo".to_string(),
+            "in progress" | "inprogress" | "in_progress" => "In Progress".to_string(),
+            "done" => "Done".to_string(),
+            _ => {
+                // Return the title case version for unknown statuses
+                let mut result = String::new();
+                let mut capitalize_next = true;
+                for c in status.chars() {
+                    if c.is_whitespace() {
+                        result.push(c);
+                        capitalize_next = true;
+                    } else if capitalize_next {
+                        result.push(c.to_uppercase().next().unwrap_or(c));
+                        capitalize_next = false;
+                    } else {
+                        result.push(c.to_lowercase().next().unwrap_or(c));
+                    }
+                }
+                result
+            }
+        }
+    }
     pub fn new(api_key: String) -> Result<Self> {
         Self::with_base_url(api_key, "https://api.linear.app".to_string())
     }
@@ -87,8 +133,31 @@ impl LinearClient {
     }
 
     pub async fn list_issues(&self, limit: i32) -> Result<Vec<Issue>> {
+        self.list_issues_with_filter(limit, None).await
+    }
+
+    pub async fn list_issues_filtered(
+        &self,
+        limit: i32,
+        filters: Option<IssueFilters>,
+    ) -> Result<Vec<Issue>> {
+        let graphql_filter = if let Some(filters) = filters {
+            self.build_issue_filter(&filters).await?
+        } else {
+            None
+        };
+
+        self.list_issues_with_filter(limit, graphql_filter).await
+    }
+
+    pub async fn list_issues_with_filter(
+        &self,
+        limit: i32,
+        filter: Option<list_issues::IssueFilter>,
+    ) -> Result<Vec<Issue>> {
         let request_body = ListIssues::build_query(list_issues::Variables {
             first: limit as i64,
+            filter,
         });
 
         let response = self
@@ -117,7 +186,9 @@ impl LinearClient {
                 identifier: issue.identifier,
                 title: issue.title,
                 status: issue.state.name,
-                assignee: issue.assignee.map(|a| a.name),
+                assignee: issue.assignee.as_ref().map(|a| a.name.clone()),
+                assignee_id: issue.assignee.map(|a| a.id),
+                team: Some(issue.team.key),
             })
             .collect();
 
@@ -235,7 +306,10 @@ mod tests {
 
     #[test]
     fn test_list_issues_query_builds() {
-        let _query = ListIssues::build_query(list_issues::Variables { first: 20 });
+        let _query = ListIssues::build_query(list_issues::Variables {
+            first: 20,
+            filter: None,
+        });
     }
 
     #[tokio::test]
@@ -261,16 +335,22 @@ mod tests {
         assert_eq!(issues[0].title, "Test Issue 1");
         assert_eq!(issues[0].status, "Todo");
         assert_eq!(issues[0].assignee, Some("Alice".to_string()));
+        assert_eq!(issues[0].assignee_id, Some("user-1".to_string()));
+        assert_eq!(issues[0].team, Some("ENG".to_string()));
 
         assert_eq!(issues[1].identifier, "TEST-2");
         assert_eq!(issues[1].title, "Test Issue 2");
         assert_eq!(issues[1].status, "In Progress");
         assert_eq!(issues[1].assignee, Some("Bob".to_string()));
+        assert_eq!(issues[1].assignee_id, Some("user-2".to_string()));
+        assert_eq!(issues[1].team, Some("DESIGN".to_string()));
 
         assert_eq!(issues[2].identifier, "TEST-3");
         assert_eq!(issues[2].title, "Test Issue 3");
         assert_eq!(issues[2].status, "Done");
         assert_eq!(issues[2].assignee, None);
+        assert_eq!(issues[2].assignee_id, None);
+        assert_eq!(issues[2].team, Some("QA".to_string()));
     }
 
     #[tokio::test]

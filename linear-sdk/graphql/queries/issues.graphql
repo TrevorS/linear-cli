@@ -1,5 +1,5 @@
-query ListIssues($first: Int!) {
-  issues(first: $first) {
+query ListIssues($first: Int!, $filter: IssueFilter) {
+  issues(first: $first, filter: $filter) {
     nodes {
       id
       identifier
@@ -8,7 +8,11 @@ query ListIssues($first: Int!) {
         name
       }
       assignee {
+        id
         name
+      }
+      team {
+        key
       }
     }
   }
