@@ -238,6 +238,81 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_filter_arguments() {
+        use clap::Parser;
+
+        // Test assignee filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--assignee", "me"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(status, None);
+                assert_eq!(team, None);
+            }
+        }
+
+        // Test status filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--status", "done"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, None);
+                assert_eq!(status, Some("done".to_string()));
+                assert_eq!(team, None);
+            }
+        }
+
+        // Test team filter
+        let cli = Cli::try_parse_from(["linear", "issues", "--team", "ENG"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, None);
+                assert_eq!(status, None);
+                assert_eq!(team, Some("ENG".to_string()));
+            }
+        }
+
+        // Test combined filters
+        let cli = Cli::try_parse_from([
+            "linear",
+            "issues",
+            "--assignee",
+            "me",
+            "--status",
+            "in progress",
+            "--team",
+            "ENG",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Issues {
+                assignee,
+                status,
+                team,
+                ..
+            } => {
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(status, Some("in progress".to_string()));
+                assert_eq!(team, Some("ENG".to_string()));
+            }
+        }
+    }
+
+    #[test]
     fn test_json_output_can_be_parsed() {
         use crate::output::{JsonFormatter, OutputFormat};
         use linear_sdk::Issue;

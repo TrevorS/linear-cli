@@ -202,6 +202,31 @@ mod tests {
     use crate::test_helpers::*;
 
     #[test]
+    fn test_normalize_status() {
+        // Test basic status normalization
+        assert_eq!(LinearClient::normalize_status("todo"), "Todo");
+        assert_eq!(LinearClient::normalize_status("TODO"), "Todo");
+        assert_eq!(LinearClient::normalize_status("ToDo"), "Todo");
+
+        assert_eq!(LinearClient::normalize_status("done"), "Done");
+        assert_eq!(LinearClient::normalize_status("DONE"), "Done");
+        assert_eq!(LinearClient::normalize_status("Done"), "Done");
+
+        assert_eq!(LinearClient::normalize_status("in progress"), "In Progress");
+        assert_eq!(LinearClient::normalize_status("IN PROGRESS"), "In Progress");
+        assert_eq!(LinearClient::normalize_status("in_progress"), "In Progress");
+        assert_eq!(LinearClient::normalize_status("inprogress"), "In Progress");
+
+        // Test unknown status - should title case
+        assert_eq!(LinearClient::normalize_status("blocked"), "Blocked");
+        assert_eq!(LinearClient::normalize_status("BLOCKED"), "Blocked");
+        assert_eq!(
+            LinearClient::normalize_status("waiting for review"),
+            "Waiting For Review"
+        );
+    }
+
+    #[test]
     fn test_linear_client_creation() {
         let client = LinearClient::new("test_api_key".to_string());
         assert!(client.is_ok());
