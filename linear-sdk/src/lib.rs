@@ -386,9 +386,6 @@ impl LinearClient {
             filter,
         });
 
-        // Remove debug print
-        // eprintln!("Full request body: {}", serde_json::to_string_pretty(&request_body).unwrap());
-
         let response = self
             .client
             .post(format!("{}/graphql", self.base_url))
