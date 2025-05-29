@@ -16,7 +16,8 @@ pub mod test_helpers;
 #[graphql(
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/viewer.graphql",
-    response_derives = "Debug"
+    response_derives = "Debug",
+    skip_serializing_none
 )]
 pub struct Viewer;
 
@@ -24,7 +25,8 @@ pub struct Viewer;
 #[graphql(
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/issues.graphql",
-    response_derives = "Debug, Clone"
+    response_derives = "Debug, Clone",
+    skip_serializing_none
 )]
 pub struct ListIssues;
 
