@@ -7,6 +7,12 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 pub mod error;
 pub mod retry;
 
+#[cfg(feature = "oauth")]
+pub mod oauth;
+
+#[cfg(feature = "oauth")]
+pub mod storage;
+
 pub use error::LinearError;
 pub use retry::RetryConfig;
 
@@ -118,7 +124,7 @@ pub struct IssueLabel {
 pub struct LinearClient {
     client: reqwest::Client,
     base_url: String,
-    _api_key: String,
+    _auth_token: String,
     verbose: bool,
     retry_config: retry::RetryConfig,
 }
@@ -412,14 +418,14 @@ impl LinearClient {
     }
 
     pub fn with_base_url_and_verbose(
-        api_key: String,
+        auth_token: String,
         base_url: String,
         verbose: bool,
     ) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&api_key).map_err(|_| LinearError::Auth)?,
+            HeaderValue::from_str(&auth_token).map_err(|_| LinearError::Auth)?,
         );
         headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
 
@@ -432,10 +438,24 @@ impl LinearClient {
         Ok(Self {
             client,
             base_url,
-            _api_key: api_key,
+            _auth_token: auth_token,
             verbose,
             retry_config: retry::RetryConfig::default(),
         })
+    }
+
+    #[cfg(feature = "oauth")]
+    pub fn new_with_oauth_token(oauth_token: String) -> Result<Self> {
+        // OAuth tokens need "Bearer " prefix
+        let bearer_token = format!("Bearer {}", oauth_token);
+        Self::with_base_url_and_verbose(bearer_token, "https://api.linear.app".to_string(), false)
+    }
+
+    #[cfg(feature = "oauth")]
+    pub fn new_with_oauth_token_and_verbose(oauth_token: String, verbose: bool) -> Result<Self> {
+        // OAuth tokens need "Bearer " prefix
+        let bearer_token = format!("Bearer {}", oauth_token);
+        Self::with_base_url_and_verbose(bearer_token, "https://api.linear.app".to_string(), verbose)
     }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {

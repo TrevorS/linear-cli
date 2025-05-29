@@ -97,10 +97,22 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
+    /// Login using OAuth (requires oauth feature)
+    #[cfg(feature = "oauth")]
+    Login {
+        /// Force new login even if token exists
+        #[arg(long)]
+        force: bool,
+        /// OAuth Client ID (can also be set via LINEAR_OAUTH_CLIENT_ID env var)
+        #[arg(long)]
+        client_id: Option<String>,
+    },
+    /// Logout and clear stored credentials (requires oauth feature)
+    #[cfg(feature = "oauth")]
+    Logout,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     env_logger::init();
 
     let cli = Cli::parse();
@@ -110,24 +122,142 @@ async fn main() -> Result<()> {
         && env::var("NO_COLOR").is_err()
         && env::var("TERM").unwrap_or_default() != "dumb";
 
-    let api_key = match env::var("LINEAR_API_KEY") {
+    // Handle OAuth commands first (synchronous commands)
+    match &cli.command {
+        #[cfg(feature = "oauth")]
+        Commands::Login { force, client_id } => {
+            let oauth_manager = match client_id {
+                Some(id) => match linear_sdk::oauth::OAuthManager::new(id.to_string()) {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        display_error(&e, use_color);
+                        std::process::exit(1);
+                    }
+                },
+                None => match linear_sdk::oauth::OAuthManager::from_env() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        display_error(&e, use_color);
+                        std::process::exit(1);
+                    }
+                },
+            };
+
+            // Check if we need to force login
+            if !force {
+                if let Ok(_token) = oauth_manager.get_token() {
+                    if use_color {
+                        println!(
+                            "{} Already logged in! Use --force to login again.",
+                            "ℹ".blue()
+                        );
+                    } else {
+                        println!("ℹ Already logged in! Use --force to login again.");
+                    }
+                    return Ok(());
+                }
+            }
+
+            match oauth_manager.login() {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(feature = "oauth")]
+        Commands::Logout => {
+            let spinner = create_spinner("Logging out...");
+            // We don't need a valid OAuth manager to logout, just need to clear the storage
+            match linear_sdk::storage::clear() {
+                Ok(_) => {
+                    spinner.finish_and_clear();
+                    if use_color {
+                        println!("{} Successfully logged out!", "✓".green());
+                    } else {
+                        println!("✓ Successfully logged out!");
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    spinner.finish_and_clear();
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            // Continue with async commands
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async move { run_async_commands(cli, use_color).await })
+        }
+    }
+}
+
+async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
+    // Authentication priority:
+    // 1. Command line --api-key (not implemented yet)
+    // 2. LINEAR_API_KEY env var
+    // 3. OAuth token from keychain (if feature enabled)
+    let auth_token = match env::var("LINEAR_API_KEY") {
         Ok(key) => key,
         Err(_) => {
-            display_error(&LinearError::Auth, use_color);
-            std::process::exit(1);
+            #[cfg(feature = "oauth")]
+            {
+                // Try to get OAuth token from keychain
+                match linear_sdk::storage::load() {
+                    Ok(token) => token,
+                    Err(_) => {
+                        eprintln!(
+                            "No authentication found. Use 'linear login' to authenticate with OAuth or set LINEAR_API_KEY environment variable."
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            }
+            #[cfg(not(feature = "oauth"))]
+            {
+                display_error(&LinearError::Auth, use_color);
+                std::process::exit(1);
+            }
         }
     };
 
     let spinner = create_spinner("Connecting to Linear...");
-    let client = match LinearClient::new_with_verbose(api_key, cli.verbose) {
-        Ok(client) => {
-            spinner.finish_and_clear();
-            client
+
+    // Determine if this is an OAuth token (from keychain) or API key
+    let is_oauth_token = env::var("LINEAR_API_KEY").is_err();
+
+    let client = if is_oauth_token {
+        #[cfg(feature = "oauth")]
+        match LinearClient::new_with_oauth_token_and_verbose(auth_token, cli.verbose) {
+            Ok(client) => {
+                spinner.finish_and_clear();
+                client
+            }
+            Err(e) => {
+                spinner.finish_and_clear();
+                display_error(&e, use_color);
+                std::process::exit(1);
+            }
         }
-        Err(e) => {
-            spinner.finish_and_clear();
-            display_error(&e, use_color);
-            std::process::exit(1);
+        #[cfg(not(feature = "oauth"))]
+        {
+            // This should never happen because we check for oauth feature above
+            unreachable!()
+        }
+    } else {
+        match LinearClient::new_with_verbose(auth_token, cli.verbose) {
+            Ok(client) => {
+                spinner.finish_and_clear();
+                client
+            }
+            Err(e) => {
+                spinner.finish_and_clear();
+                display_error(&e, use_color);
+                std::process::exit(1);
+            }
         }
     };
 
@@ -254,6 +384,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        #[cfg(feature = "oauth")]
+        Commands::Login { .. } | Commands::Logout => {
+            // These commands are handled earlier, this should never be reached
+            unreachable!()
+        }
     }
 
     Ok(())
@@ -319,6 +454,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test custom limit
@@ -338,6 +475,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test short form
@@ -357,6 +496,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test JSON flag
@@ -376,6 +517,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test JSON with pretty flag
@@ -395,6 +538,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test pretty flag requires json (should fail)
@@ -413,6 +558,8 @@ mod tests {
                 assert_eq!(id, "ENG-123");
                 assert!(!json);
             }
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
 
@@ -423,6 +570,8 @@ mod tests {
                 assert_eq!(id, "ENG-456");
                 assert!(json);
             }
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
 
@@ -433,6 +582,8 @@ mod tests {
                 assert_eq!(id, "abc-123-def-456");
                 assert!(!json);
             }
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
 
@@ -460,6 +611,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test status filter
@@ -477,6 +630,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test team filter
@@ -494,6 +649,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
 
         // Test combined filters
@@ -521,6 +678,8 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
         }
     }
 
