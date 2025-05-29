@@ -1,8 +1,7 @@
 // ABOUTME: This module handles output formatting for the Linear CLI
 // ABOUTME: It provides different formatters like table formatting with color support
 
-use anyhow::Result;
-use linear_sdk::{DetailedIssue, Issue};
+use linear_sdk::{DetailedIssue, Issue, Result};
 use owo_colors::OwoColorize;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
