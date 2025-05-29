@@ -985,6 +985,8 @@ dependencies = [
  "insta",
  "linear-sdk",
  "owo-colors",
+ "serde",
+ "serde_json",
  "tabled",
  "tokio",
 ]

@@ -27,7 +27,8 @@ pub struct ListIssues;
 
 pub use viewer::ResponseData as ViewerResponseData;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Issue {
     pub id: String,
     pub identifier: String,

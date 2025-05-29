@@ -9,7 +9,7 @@ use std::env;
 mod output;
 mod types;
 
-use crate::output::{OutputFormat, TableFormatter};
+use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
 #[derive(Parser)]
 #[command(name = "linear")]
@@ -30,6 +30,14 @@ enum Commands {
         /// Maximum number of issues to fetch
         #[arg(short, long, default_value = "20")]
         limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
     },
 }
 
@@ -59,14 +67,23 @@ async fn main() -> Result<()> {
         && env::var("TERM").unwrap_or_default() != "dumb";
 
     match cli.command {
-        Commands::Issues { limit } => {
+        Commands::Issues {
+            limit,
+            json,
+            pretty,
+        } => {
             let issues = client.list_issues(limit).await?;
 
-            if issues.is_empty() {
+            if issues.is_empty() && !json {
                 println!("No issues found.");
             } else {
-                let formatter = TableFormatter::new(use_color);
-                let output = formatter.format_issues(&issues)?;
+                let output = if json {
+                    let formatter = JsonFormatter::new(pretty);
+                    formatter.format_issues(&issues)?
+                } else {
+                    let formatter = TableFormatter::new(use_color);
+                    formatter.format_issues(&issues)?
+                };
                 println!("{}", output);
             }
         }
@@ -108,25 +125,120 @@ mod tests {
         // Test default limit
         let cli = Cli::try_parse_from(["linear", "issues"]).unwrap();
         match cli.command {
-            Commands::Issues { limit } => {
+            Commands::Issues {
+                limit,
+                json,
+                pretty,
+            } => {
                 assert_eq!(limit, 20);
+                assert!(!json);
+                assert!(!pretty);
             }
         }
 
         // Test custom limit
         let cli = Cli::try_parse_from(["linear", "issues", "--limit", "5"]).unwrap();
         match cli.command {
-            Commands::Issues { limit } => {
+            Commands::Issues {
+                limit,
+                json,
+                pretty,
+            } => {
                 assert_eq!(limit, 5);
+                assert!(!json);
+                assert!(!pretty);
             }
         }
 
         // Test short form
         let cli = Cli::try_parse_from(["linear", "issues", "-l", "10"]).unwrap();
         match cli.command {
-            Commands::Issues { limit } => {
+            Commands::Issues {
+                limit,
+                json,
+                pretty,
+            } => {
                 assert_eq!(limit, 10);
+                assert!(!json);
+                assert!(!pretty);
             }
         }
+
+        // Test JSON flag
+        let cli = Cli::try_parse_from(["linear", "issues", "--json"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                limit,
+                json,
+                pretty,
+            } => {
+                assert_eq!(limit, 20);
+                assert!(json);
+                assert!(!pretty);
+            }
+        }
+
+        // Test JSON with pretty flag
+        let cli = Cli::try_parse_from(["linear", "issues", "--json", "--pretty"]).unwrap();
+        match cli.command {
+            Commands::Issues {
+                limit,
+                json,
+                pretty,
+            } => {
+                assert_eq!(limit, 20);
+                assert!(json);
+                assert!(pretty);
+            }
+        }
+
+        // Test pretty flag requires json (should fail)
+        let result = Cli::try_parse_from(["linear", "issues", "--pretty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_output_can_be_parsed() {
+        use crate::output::{JsonFormatter, OutputFormat};
+        use linear_sdk::Issue;
+
+        // Create test issues
+        let issues = vec![
+            Issue {
+                id: "1".to_string(),
+                identifier: "ENG-123".to_string(),
+                title: "Test issue".to_string(),
+                status: "Todo".to_string(),
+                assignee: Some("Alice".to_string()),
+            },
+            Issue {
+                id: "2".to_string(),
+                identifier: "ENG-124".to_string(),
+                title: "Another issue".to_string(),
+                status: "Done".to_string(),
+                assignee: None,
+            },
+        ];
+
+        // Test compact JSON
+        let formatter = JsonFormatter::new(false);
+        let output = formatter.format_issues(&issues).unwrap();
+
+        // Verify it can be parsed back
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0]["identifier"], "ENG-123");
+        assert_eq!(parsed[1]["identifier"], "ENG-124");
+
+        // Test pretty JSON
+        let formatter = JsonFormatter::new(true);
+        let output = formatter.format_issues(&issues).unwrap();
+
+        // Verify pretty JSON can also be parsed back
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed.len(), 2);
+
+        // Verify it's actually pretty printed (contains newlines)
+        assert!(output.contains('\n'));
     }
 }
