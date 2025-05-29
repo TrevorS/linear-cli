@@ -6,11 +6,13 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 clap = { version = "4.5.39", features = ["derive"] }
-env_logger = "0.11.5"
+env_logger = "0.11.8"
 linear-sdk = { version = "0.1.0", path = "../linear-sdk" }
-owo-colors = "4"
-tabled = { version = "0.15", features = ["ansi"] }
+owo-colors = "4.2.1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tabled = { version = "0.19.0", features = ["ansi"] }
 tokio = { version = "1.45.1", features = ["full"] }
 
 [dev-dependencies]
-insta = "1.43"
+insta = "1.43.1"
