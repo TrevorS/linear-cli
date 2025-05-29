@@ -1,0 +1,15 @@
+query ListIssues($first: Int!) {
+  issues(first: $first) {
+    nodes {
+      id
+      identifier
+      title
+      state {
+        name
+      }
+      assignee {
+        name
+      }
+    }
+  }
+}

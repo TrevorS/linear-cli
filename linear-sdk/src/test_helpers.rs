@@ -34,15 +34,45 @@ pub fn mock_issues_response() -> serde_json::Value {
                         "id": "issue-1",
                         "title": "Test Issue 1",
                         "identifier": "TEST-1",
-                        "description": "Test description 1"
+                        "state": {
+                            "name": "Todo"
+                        },
+                        "assignee": {
+                            "name": "Alice"
+                        }
                     },
                     {
                         "id": "issue-2",
                         "title": "Test Issue 2",
                         "identifier": "TEST-2",
-                        "description": "Test description 2"
+                        "state": {
+                            "name": "In Progress"
+                        },
+                        "assignee": {
+                            "name": "Bob"
+                        }
+                    },
+                    {
+                        "id": "issue-3",
+                        "title": "Test Issue 3",
+                        "identifier": "TEST-3",
+                        "state": {
+                            "name": "Done"
+                        },
+                        "assignee": null
                     }
                 ]
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_empty_issues_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issues": {
+                "nodes": []
             }
         }
     })

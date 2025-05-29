@@ -17,7 +17,24 @@ pub mod test_helpers;
 )]
 pub struct Viewer;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/issues.graphql",
+    response_derives = "Debug, Clone"
+)]
+pub struct ListIssues;
+
 pub use viewer::ResponseData as ViewerResponseData;
+
+#[derive(Debug, Clone)]
+pub struct Issue {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    pub status: String,
+    pub assignee: Option<String>,
+}
 
 pub struct LinearClient {
     client: reqwest::Client,
@@ -66,6 +83,44 @@ impl LinearClient {
         response_body
             .data
             .ok_or_else(|| anyhow::anyhow!("No data in response"))
+    }
+
+    pub async fn list_issues(&self, limit: i32) -> Result<Vec<Issue>> {
+        let request_body = ListIssues::build_query(list_issues::Variables {
+            first: limit as i64,
+        });
+
+        let response = self
+            .client
+            .post(format!("{}/graphql", self.base_url))
+            .json(&request_body)
+            .send()
+            .await?;
+
+        let response_body: Response<list_issues::ResponseData> = response.json().await?;
+
+        if let Some(errors) = response_body.errors {
+            return Err(anyhow::anyhow!("GraphQL errors: {:?}", errors));
+        }
+
+        let data = response_body
+            .data
+            .ok_or_else(|| anyhow::anyhow!("No data in response"))?;
+
+        let issues = data
+            .issues
+            .nodes
+            .into_iter()
+            .map(|issue| Issue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                status: issue.state.name,
+                assignee: issue.assignee.map(|a| a.name),
+            })
+            .collect();
+
+        Ok(issues)
     }
 }
 
@@ -175,5 +230,99 @@ mod tests {
         assert!(result.is_ok(), "Query should succeed with valid API key");
         let data = result.unwrap();
         assert!(!data.viewer.id.is_empty(), "Viewer should have an ID");
+    }
+
+    #[test]
+    fn test_list_issues_query_builds() {
+        let _query = ListIssues::build_query(list_issues::Variables { first: 20 });
+    }
+
+    #[tokio::test]
+    async fn test_list_issues_success() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_issues_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.list_issues(20).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issues = result.unwrap();
+        assert_eq!(issues.len(), 3);
+
+        assert_eq!(issues[0].identifier, "TEST-1");
+        assert_eq!(issues[0].title, "Test Issue 1");
+        assert_eq!(issues[0].status, "Todo");
+        assert_eq!(issues[0].assignee, Some("Alice".to_string()));
+
+        assert_eq!(issues[1].identifier, "TEST-2");
+        assert_eq!(issues[1].title, "Test Issue 2");
+        assert_eq!(issues[1].status, "In Progress");
+        assert_eq!(issues[1].assignee, Some("Bob".to_string()));
+
+        assert_eq!(issues[2].identifier, "TEST-3");
+        assert_eq!(issues[2].title, "Test Issue 3");
+        assert_eq!(issues[2].status, "Done");
+        assert_eq!(issues[2].assignee, None);
+    }
+
+    #[tokio::test]
+    async fn test_list_issues_empty() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_empty_issues_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.list_issues(20).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issues = result.unwrap();
+        assert_eq!(issues.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_issues_error() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_graphql_error_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.list_issues(20).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("GraphQL errors"));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "integration-tests")]
+    async fn test_list_issues_real_api() {
+        let api_key = std::env::var("LINEAR_API_KEY")
+            .expect("LINEAR_API_KEY must be set for integration tests");
+
+        let client = LinearClient::new(api_key).expect("Failed to create client");
+        let result = client.list_issues(5).await;
+
+        assert!(result.is_ok(), "Query should succeed with valid API key");
+        let issues = result.unwrap();
+        assert!(issues.len() <= 5, "Should return at most 5 issues");
     }
 }
