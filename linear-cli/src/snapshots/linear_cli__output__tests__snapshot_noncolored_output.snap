@@ -2,8 +2,8 @@
 source: linear-cli/src/output.rs
 expression: result
 ---
- Issue   | Title                       | Status      | Assignee
+ Issue   | Title                       | Status      | Assignee    
 ---------+-----------------------------+-------------+-------------
- ENG-100 | Fix authentication bug      | Todo        | Alice Smith
- ENG-101 | Implement user profile page | In Progress | Unassigned
+ ENG-100 | Fix authentication bug      | Todo        | Alice Smith 
+ ENG-101 | Implement user profile page | In Progress | Unassigned  
  ENG-102 | Update documentation        | Done        | Bob Johnson
