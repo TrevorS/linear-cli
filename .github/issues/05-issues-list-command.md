@@ -35,7 +35,7 @@ From the implementation plan (Prompt 5), we need to:
       #[command(subcommand)]
       command: Commands,
   }
-  
+
   #[derive(Subcommand)]
   enum Commands {
       /// List issues

@@ -18,13 +18,13 @@ From the implementation plan (Prompt 10), we need to:
   pub enum LinearError {
       #[error("Authentication failed. Check your LINEAR_API_KEY")]
       Auth,
-      
+
       #[error("Issue {0} not found")]
       IssueNotFound(String),
-      
+
       #[error("Network error: {0}")]
       Network(String),
-      
+
       #[error("GraphQL error: {0}")]
       GraphQL(String),
   }

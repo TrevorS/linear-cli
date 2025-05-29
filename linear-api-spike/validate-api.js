@@ -32,7 +32,7 @@ function makeRequest(query, operationName = null) {
 
     const req = https.request(options, (res) => {
       let body = '';
-      
+
       res.on('data', (chunk) => {
         body += chunk;
       });
@@ -182,21 +182,21 @@ async function validateAPI() {
     // Test 1: Introspection query
     console.log('1. Testing schema introspection...');
     const introspectionResponse = await makeRequest(introspectionQuery, 'IntrospectionQuery');
-    
+
     findings.authentication.headerFormat = 'Authorization: <API_KEY>';
     findings.authentication.status = introspectionResponse.status;
     findings.authentication.success = introspectionResponse.status === 200;
-    
+
     findings.rateLimits.headers = {
       'x-ratelimit-limit': introspectionResponse.headers['x-ratelimit-limit'],
       'x-ratelimit-remaining': introspectionResponse.headers['x-ratelimit-remaining'],
       'x-ratelimit-reset': introspectionResponse.headers['x-ratelimit-reset']
     };
-    
+
     if (introspectionResponse.status === 200 && introspectionResponse.body.data) {
       findings.introspection.available = true;
       findings.introspection.schemaSize = JSON.stringify(introspectionResponse.body.data).length;
-      
+
       // Save schema
       fs.writeFileSync('schema.json', JSON.stringify(introspectionResponse.body.data, null, 2));
       console.log('✓ Schema introspection successful, saved to schema.json');
@@ -209,7 +209,7 @@ async function validateAPI() {
     // Test 2: Viewer query
     console.log('\n2. Testing viewer query...');
     const viewerResponse = await makeRequest(viewerQuery, 'ViewerQuery');
-    
+
     if (viewerResponse.status === 200 && viewerResponse.body.data) {
       findings.queries.viewer = {
         success: true,
@@ -227,7 +227,7 @@ async function validateAPI() {
     // Test 3: Issues query
     console.log('\n3. Testing issues query...');
     const issuesResponse = await makeRequest(issuesQuery, 'IssuesQuery');
-    
+
     if (issuesResponse.status === 200 && issuesResponse.body.data) {
       findings.queries.issues = {
         success: true,
@@ -246,7 +246,7 @@ async function validateAPI() {
     // Test error handling
     console.log('\n4. Testing error response format...');
     const errorResponse = await makeRequest('{ invalidQuery }', 'ErrorTest');
-    
+
     findings.errors = {
       statusCode: errorResponse.status,
       format: errorResponse.body.errors ? 'GraphQL errors array' : 'Unknown',

@@ -19,7 +19,7 @@ linear-cli --help
 This project uses a Cargo workspace structure:
 
 - `linear-cli/` - Main CLI binary
-- `linear-sdk/` - Reusable Linear API client library  
+- `linear-sdk/` - Reusable Linear API client library
 - `xtask/` - Build automation and schema management
 
 ### Getting Started
@@ -45,7 +45,7 @@ Set up pre-commit hooks to ensure code quality:
 
 ```bash
 # Option 1: Using pre-commit framework (recommended)
-pip install pre-commit
+uv tool install pre-commit
 pre-commit install
 
 # Option 2: Manual git hook

@@ -18,7 +18,7 @@ From the implementation plan (Prompt 16), we need to:
       #[command(subcommand)]
       action: BulkAction,
   }
-  
+
   #[derive(Subcommand)]
   enum BulkAction {
       /// Update issues matching filters
@@ -26,20 +26,20 @@ From the implementation plan (Prompt 16), we need to:
           // Same filters as 'issues' command
           #[arg(long)]
           assignee: Option<String>,
-          
+
           #[arg(long)]
           status: Option<String>,
-          
+
           #[arg(long)]
           team: Option<String>,
-          
+
           // Updates to apply
           #[arg(long)]
           set_status: Option<String>,
-          
+
           #[arg(long)]
           set_assignee: Option<String>,
-          
+
           /// Skip confirmation
           #[arg(long)]
           force: bool,
@@ -49,16 +49,16 @@ From the implementation plan (Prompt 16), we need to:
 - [ ] Implement preview mode:
   ```
   Found 5 issues matching filters:
-  
+
   ENG-123  Fix login race condition
   ENG-124  Implement OAuth flow
   ENG-125  Add user preferences
   ENG-126  Refactor auth module
   ENG-127  Update documentation
-  
+
   Will update:
   - Status: Todo → In Progress
-  
+
   Continue? [y/N]
   ```
 - [ ] Add progress bar:

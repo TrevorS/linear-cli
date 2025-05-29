@@ -7,11 +7,14 @@ This document explains how to set up pre-commit hooks for this Rust project to e
 ### Install pre-commit
 
 ```bash
-# Using pip
-pip install pre-commit
+# Using uv (recommended)
+uv tool install pre-commit
 
 # Using homebrew (macOS)
 brew install pre-commit
+
+# Using pip (fallback)
+pip install pre-commit
 
 # Using conda
 conda install -c conda-forge pre-commit

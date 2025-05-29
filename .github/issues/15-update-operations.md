@@ -30,19 +30,19 @@ From the implementation plan (Prompt 15), we need to:
   Update {
       /// Issue identifier
       id: String,
-      
+
       /// New status
       #[arg(long)]
       status: Option<String>,
-      
+
       /// New assignee
       #[arg(long)]
       assignee: Option<String>,
-      
+
       /// New priority
       #[arg(long)]
       priority: Option<String>,
-      
+
       /// New title
       #[arg(long)]
       title: Option<String>,
@@ -55,8 +55,8 @@ From the implementation plan (Prompt 15), we need to:
       /// Issue identifier
       id: String,
   },
-  
-  /// Reopen an issue  
+
+  /// Reopen an issue
   Reopen {
       /// Issue identifier
       id: String,
@@ -68,7 +68,7 @@ From the implementation plan (Prompt 15), we need to:
   Comment {
       /// Issue identifier
       id: String,
-      
+
       /// Comment text (or read from stdin)
       message: Option<String>,
   }
@@ -82,7 +82,7 @@ From the implementation plan (Prompt 15), we need to:
   Updating ENG-126:
   Status: In Progress → Done
   Assignee: John Doe → Jane Smith
-  
+
   Confirm? [y/N]
   ```
 - [ ] Add tests for all update scenarios

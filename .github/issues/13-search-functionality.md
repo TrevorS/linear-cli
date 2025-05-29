@@ -32,11 +32,11 @@ From the implementation plan (Prompt 13), we need to:
   Search {
       /// Search query
       query: String,
-      
+
       /// Limit results per type
       #[arg(long, default_value = "10")]
       limit: i32,
-      
+
       #[arg(long)]
       json: bool,
   }
@@ -52,11 +52,11 @@ From the implementation plan (Prompt 13), we need to:
   ─────────────────────
   ENG-123  Fix login race condition     In Progress
   ENG-125  Login timeout issues          Todo
-  
+
   Projects (1 result):
   ──────────────────
   Login System Refactor
-  
+
   Comments (2 results):
   ──────────────────
   In ENG-120: "The login fix should address..."

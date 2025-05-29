@@ -38,7 +38,7 @@ From the implementation plan (Prompt 9), we need to:
   Issue {
       /// Issue identifier (e.g., ENG-123)
       id: String,
-      
+
       /// Output as JSON
       #[arg(long)]
       json: bool,
@@ -54,16 +54,16 @@ From the implementation plan (Prompt 9), we need to:
   Team:      Engineering (ENG)
   Project:   Web App
   Priority:  High
-  
+
   Description:
   Users are experiencing race conditions when logging in
   simultaneously from multiple devices.
-  
+
   Labels: bug, authentication
-  
+
   Created: 2024-01-15 10:30 AM
   Updated: 2024-01-16 2:45 PM
-  
+
   View in Linear: https://linear.app/...
   ```
 - [ ] Handle issue not found:

@@ -19,7 +19,7 @@ From the implementation plan (Prompt 6), we need to:
   pub trait OutputFormat {
       fn format_issues(&self, issues: &[Issue]) -> Result<String>;
   }
-  
+
   pub struct TableFormatter {
       use_color: bool,
   }
@@ -36,7 +36,7 @@ From the implementation plan (Prompt 6), we need to:
       /// Disable colored output
       #[arg(long, global = true)]
       no_color: bool,
-      
+
       #[command(subcommand)]
       command: Commands,
   }

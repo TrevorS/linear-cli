@@ -163,11 +163,11 @@ query GetIssue($id: String!) {
 ```
 $ linear issues --assignee me
 
- Issue     Title                          Status        Project         
+ Issue     Title                          Status        Project
  ─────────────────────────────────────────────────────────────────────
- ENG-123   Fix login race condition       In Progress   Web App        
- ENG-124   Implement OAuth flow           Todo          Web App        
- MOB-89    Crash on iOS 17.2              In Review     Mobile         
+ ENG-123   Fix login race condition       In Progress   Web App
+ ENG-124   Implement OAuth flow           Todo          Web App
+ MOB-89    Crash on iOS 17.2              In Review     Mobile
 ```
 
 ### Smart Filtering
@@ -191,7 +191,7 @@ Error: No Linear API key found
 To authenticate, either:
   1. Set the LINEAR_API_KEY environment variable
   2. Run 'linear login' for OAuth authentication
-  
+
 Get your API key from: https://linear.app/settings/api
 ```
 
@@ -258,7 +258,7 @@ OFFLINE=1 cargo build
 
 ### Next (Phase 2)
 - [ ] `projects` - List all projects
-- [ ] `teams` - List all teams  
+- [ ] `teams` - List all teams
 - [ ] `comments <id>` - Show issue comments
 - [ ] `search <query>` - Full text search
 - [ ] `my work` - Smart view of your current work

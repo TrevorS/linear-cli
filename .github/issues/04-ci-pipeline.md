@@ -41,13 +41,13 @@ From the implementation plan (Prompt 4), we need:
   ```makefile
   test:
       cargo test
-  
+
   test-integration:
       cargo test --features integration-tests -- --ignored
-  
+
   fmt:
       cargo fmt --all
-  
+
   lint:
       cargo clippy -- -D warnings
   ```

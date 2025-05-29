@@ -31,23 +31,23 @@ From the implementation plan (Prompt 14), we need to:
       /// Issue title
       #[arg(short, long)]
       title: Option<String>,
-      
+
       /// Team key (e.g., ENG)
       #[arg(short = 'T', long)]
       team: Option<String>,
-      
+
       /// Description
       #[arg(short, long)]
       description: Option<String>,
-      
+
       /// Assignee email or "me"
       #[arg(short, long)]
       assignee: Option<String>,
-      
+
       /// Priority (urgent, high, medium, low)
       #[arg(short, long)]
       priority: Option<String>,
-      
+
       /// Open in browser after creation
       #[arg(long)]
       open: bool,
@@ -65,10 +65,10 @@ From the implementation plan (Prompt 14), we need to:
 - [ ] Show success result:
   ```
   ✓ Created issue ENG-126
-  
+
   Title: Implement user settings
   URL: https://linear.app/company/issue/ENG-126
-  
+
   Opening in browser...
   ```
 - [ ] Add dry-run mode:

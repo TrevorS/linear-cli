@@ -34,11 +34,11 @@ From the implementation plan (Prompt 7), we need to:
   Issues {
       #[arg(short, long, default_value = "20")]
       limit: i32,
-      
+
       /// Output as JSON
       #[arg(long)]
       json: bool,
-      
+
       /// Pretty print JSON output
       #[arg(long, requires = "json")]
       pretty: bool,
