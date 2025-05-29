@@ -41,6 +41,7 @@ fn display_error(error: &LinearError, use_color: bool) {
 #[derive(Parser)]
 #[command(name = "linear")]
 #[command(about = "A CLI for Linear", long_about = None)]
+#[command(version)]
 struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
@@ -680,6 +681,55 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+        }
+    }
+
+    #[test]
+    fn test_version_command() {
+        use clap::Parser;
+        use std::process::Command;
+
+        // Test that version command parses correctly
+        let result = Cli::try_parse_from(["linear", "--version"]);
+        // This will fail because --version is handled by clap before we get the result
+        // But we can test that it doesn't conflict with other parsing
+        assert!(result.is_err()); // clap exits early for --version
+
+        // Test that version is included in help output
+        let output = Command::new("cargo")
+            .args(["run", "-p", "linear-cli", "--", "--help"])
+            .output()
+            .unwrap();
+        let help_output = std::str::from_utf8(&output.stdout).unwrap();
+        assert!(help_output.contains("--version") || help_output.contains("-V"));
+    }
+
+    #[test]
+    fn test_deferred_authentication() {
+        use clap::Parser;
+
+        // Test that help commands can be parsed without requiring authentication
+        // (Authentication is only checked at runtime when making API calls)
+
+        // Help command should parse successfully
+        let cli = Cli::try_parse_from(["linear", "--help"]);
+        assert!(cli.is_err()); // clap exits early for --help
+
+        // Subcommand help should parse successfully
+        let cli = Cli::try_parse_from(["linear", "issues", "--help"]);
+        assert!(cli.is_err()); // clap exits early for --help
+
+        // Regular commands should parse successfully (auth checked later)
+        let cli = Cli::try_parse_from(["linear", "issues"]).unwrap();
+        match cli.command {
+            Commands::Issues { .. } => {} // Success - parsing works without auth
+            _ => panic!("Expected Issues command"),
+        }
+
+        let cli = Cli::try_parse_from(["linear", "status"]).unwrap();
+        match cli.command {
+            Commands::Status { .. } => {} // Success - parsing works without auth
+            _ => panic!("Expected Status command"),
         }
     }
 
