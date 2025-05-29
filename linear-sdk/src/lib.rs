@@ -4,11 +4,10 @@
 use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
-use std::time::Duration;
-
 // Custom scalar types used by Linear's GraphQL schema
 type DateTimeOrDuration = String;
 type TimelessDateOrDuration = String;
+type Duration = String;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -17,7 +16,8 @@ pub mod test_helpers;
 #[graphql(
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/viewer.graphql",
-    response_derives = "Debug"
+    response_derives = "Debug",
+    skip_serializing_none
 )]
 pub struct Viewer;
 
@@ -25,7 +25,8 @@ pub struct Viewer;
 #[graphql(
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/issues.graphql",
-    response_derives = "Debug, Clone"
+    response_derives = "Debug, Clone",
+    skip_serializing_none
 )]
 pub struct ListIssues;
 
@@ -58,14 +59,239 @@ pub struct IssueFilters {
 impl LinearClient {
     async fn build_issue_filter(
         &self,
-        _filters: &IssueFilters,
+        filters: &IssueFilters,
     ) -> Result<Option<list_issues::IssueFilter>> {
-        // For now, let's disable filtering until we can implement it properly
-        // This allows us to test the basic CLI structure
-        Ok(None)
+        use list_issues::*;
+
+        // Create a minimal issue filter with only the fields we need
+        let mut issue_filter = IssueFilter {
+            id: None,
+            created_at: None,
+            updated_at: None,
+            number: None,
+            title: None,
+            description: None,
+            priority: None,
+            estimate: None,
+            started_at: None,
+            triaged_at: None,
+            completed_at: None,
+            canceled_at: None,
+            archived_at: None,
+            auto_closed_at: None,
+            auto_archived_at: None,
+            added_to_cycle_at: None,
+            added_to_cycle_period: None,
+            due_date: None,
+            snoozed_until_at: None,
+            assignee: Box::new(None),
+            last_applied_template: None,
+            recurring_issue_template: None,
+            source_metadata: None,
+            creator: Box::new(None),
+            parent: Box::new(None),
+            snoozed_by: Box::new(None),
+            labels: Box::new(None),
+            subscribers: Box::new(None),
+            team: Box::new(None),
+            project_milestone: None,
+            comments: Box::new(None),
+            cycle: Box::new(None),
+            project: Box::new(None),
+            state: Box::new(None),
+            children: Box::new(None),
+            attachments: Box::new(None),
+            searchable_content: None,
+            has_related_relations: None,
+            has_duplicate_relations: None,
+            has_blocked_by_relations: None,
+            has_blocking_relations: None,
+            sla_status: None,
+            reactions: None,
+            needs: Box::new(None),
+            customer_count: None,
+            lead_time: None,
+            cycle_time: None,
+            age_time: None,
+            triage_time: None,
+            and: Box::new(None),
+            or: Box::new(None),
+        };
+
+        let mut has_filters = false;
+
+        // Handle assignee filter
+        if let Some(assignee_value) = &filters.assignee {
+            match assignee_value.as_str() {
+                "me" => {
+                    // We need to query for the current user's ID
+                    let viewer_data = self.execute_viewer_query().await?;
+                    let viewer_id = viewer_data.viewer.id;
+
+                    // Create a minimal filter with only the fields we need
+                    issue_filter.assignee = Box::new(Some(NullableUserFilter {
+                        id: Some(IDComparator {
+                            eq: Some(viewer_id),
+                            neq: None,
+                            in_: None,
+                            nin: None,
+                        }),
+                        created_at: None,
+                        updated_at: None,
+                        name: None,
+                        display_name: None,
+                        email: None,
+                        active: None,
+                        assigned_issues: Box::new(None),
+                        admin: None,
+                        invited: None,
+                        app: None,
+                        is_me: None,
+                        null: None,
+                        and: Box::new(None),
+                        or: Box::new(None),
+                    }));
+                    has_filters = true;
+                }
+                "unassigned" => {
+                    // For unassigned, we only need the null field
+                    issue_filter.assignee = Box::new(Some(NullableUserFilter {
+                        id: None,
+                        created_at: None,
+                        updated_at: None,
+                        name: None,
+                        display_name: None,
+                        email: None,
+                        active: None,
+                        assigned_issues: Box::new(None),
+                        admin: None,
+                        invited: None,
+                        app: None,
+                        is_me: None,
+                        null: Some(true),
+                        and: Box::new(None),
+                        or: Box::new(None),
+                    }));
+                    has_filters = true;
+                }
+                _ => {
+                    // Filter by assignee name
+                    issue_filter.assignee = Box::new(Some(NullableUserFilter {
+                        id: None,
+                        created_at: None,
+                        updated_at: None,
+                        name: Some(StringComparator {
+                            eq: Some(assignee_value.clone()),
+                            neq: None,
+                            in_: None,
+                            nin: None,
+                            eq_ignore_case: None,
+                            neq_ignore_case: None,
+                            starts_with: None,
+                            starts_with_ignore_case: None,
+                            not_starts_with: None,
+                            ends_with: None,
+                            not_ends_with: None,
+                            contains: None,
+                            contains_ignore_case: None,
+                            not_contains: None,
+                            not_contains_ignore_case: None,
+                            contains_ignore_case_and_accent: None,
+                        }),
+                        display_name: None,
+                        email: None,
+                        active: None,
+                        assigned_issues: Box::new(None),
+                        admin: None,
+                        invited: None,
+                        app: None,
+                        is_me: None,
+                        null: None,
+                        and: Box::new(None),
+                        or: Box::new(None),
+                    }));
+                    has_filters = true;
+                }
+            }
+        }
+
+        // Handle status filter
+        if let Some(status_value) = &filters.status {
+            let normalized_status = Self::normalize_status(status_value);
+            issue_filter.state = Box::new(Some(WorkflowStateFilter {
+                id: None,
+                created_at: None,
+                updated_at: None,
+                name: Some(StringComparator {
+                    eq: Some(normalized_status),
+                    neq: None,
+                    in_: None,
+                    nin: None,
+                    eq_ignore_case: None,
+                    neq_ignore_case: None,
+                    starts_with: None,
+                    starts_with_ignore_case: None,
+                    not_starts_with: None,
+                    ends_with: None,
+                    not_ends_with: None,
+                    contains: None,
+                    contains_ignore_case: None,
+                    not_contains: None,
+                    not_contains_ignore_case: None,
+                    contains_ignore_case_and_accent: None,
+                }),
+                description: None,
+                position: None,
+                type_: None,
+                team: Box::new(None),
+                issues: Box::new(None),
+                and: Box::new(None),
+                or: Box::new(None),
+            }));
+            has_filters = true;
+        }
+
+        // Handle team filter
+        if let Some(team_value) = &filters.team {
+            issue_filter.team = Box::new(Some(TeamFilter {
+                id: None,
+                created_at: None,
+                updated_at: None,
+                name: None,
+                key: Some(StringComparator {
+                    eq: Some(team_value.clone()),
+                    neq: None,
+                    in_: None,
+                    nin: None,
+                    eq_ignore_case: None,
+                    neq_ignore_case: None,
+                    starts_with: None,
+                    starts_with_ignore_case: None,
+                    not_starts_with: None,
+                    ends_with: None,
+                    not_ends_with: None,
+                    contains: None,
+                    contains_ignore_case: None,
+                    not_contains: None,
+                    not_contains_ignore_case: None,
+                    contains_ignore_case_and_accent: None,
+                }),
+                description: None,
+                issues: Box::new(None),
+                parent: Box::new(None),
+                and: Box::new(None),
+                or: Box::new(None),
+            }));
+            has_filters = true;
+        }
+
+        if has_filters {
+            Ok(Some(issue_filter))
+        } else {
+            Ok(None)
+        }
     }
 
-    #[allow(dead_code)]
     fn normalize_status(status: &str) -> String {
         match status.to_lowercase().as_str() {
             "todo" => "Todo".to_string(),
@@ -101,7 +327,7 @@ impl LinearClient {
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .timeout(Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -430,5 +656,178 @@ mod tests {
         assert!(result.is_ok(), "Query should succeed with valid API key");
         let issues = result.unwrap();
         assert!(issues.len() <= 5, "Should return at most 5 issues");
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_assignee_me() {
+        let mut server = mock_linear_server().await;
+
+        // Mock the viewer query
+        let viewer_mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_viewer_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: Some("me".to_string()),
+            status: None,
+            team: None,
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        viewer_mock.assert();
+
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_some());
+
+        let filter = filter.unwrap();
+        let assignee_filter = (*filter.assignee).as_ref().unwrap();
+        assert!(assignee_filter.id.is_some());
+        assert_eq!(
+            assignee_filter.id.as_ref().unwrap().eq,
+            Some("test-user-id".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_assignee_unassigned() {
+        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: Some("unassigned".to_string()),
+            status: None,
+            team: None,
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_some());
+
+        let filter = filter.unwrap();
+        let assignee_filter = (*filter.assignee).as_ref().unwrap();
+        assert_eq!(assignee_filter.null, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_status() {
+        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: None,
+            status: Some("in progress".to_string()),
+            team: None,
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_some());
+
+        let filter = filter.unwrap();
+        let state_filter = (*filter.state).as_ref().unwrap();
+        assert!(state_filter.name.is_some());
+        assert_eq!(
+            state_filter.name.as_ref().unwrap().eq,
+            Some("In Progress".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_team() {
+        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: None,
+            status: None,
+            team: Some("ENG".to_string()),
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_some());
+
+        let filter = filter.unwrap();
+        let team_filter = (*filter.team).as_ref().unwrap();
+        assert!(team_filter.key.is_some());
+        assert_eq!(
+            team_filter.key.as_ref().unwrap().eq,
+            Some("ENG".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_combined() {
+        let mut server = mock_linear_server().await;
+
+        // Mock the viewer query
+        let viewer_mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_viewer_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: Some("me".to_string()),
+            status: Some("todo".to_string()),
+            team: Some("DESIGN".to_string()),
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        viewer_mock.assert();
+
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_some());
+
+        let filter = filter.unwrap();
+
+        // Check assignee filter
+        let assignee_filter = (*filter.assignee).as_ref().unwrap();
+        assert_eq!(
+            assignee_filter.id.as_ref().unwrap().eq,
+            Some("test-user-id".to_string())
+        );
+
+        // Check status filter
+        let state_filter = (*filter.state).as_ref().unwrap();
+        assert_eq!(
+            state_filter.name.as_ref().unwrap().eq,
+            Some("Todo".to_string())
+        );
+
+        // Check team filter
+        let team_filter = (*filter.team).as_ref().unwrap();
+        assert_eq!(
+            team_filter.key.as_ref().unwrap().eq,
+            Some("DESIGN".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_issue_filter_empty() {
+        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+
+        let filters = IssueFilters {
+            assignee: None,
+            status: None,
+            team: None,
+        };
+
+        let result = client.build_issue_filter(&filters).await;
+        assert!(result.is_ok());
+        let filter = result.unwrap();
+        assert!(filter.is_none());
     }
 }

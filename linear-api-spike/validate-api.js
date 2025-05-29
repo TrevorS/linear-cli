@@ -165,6 +165,18 @@ const issuesQuery = `
   }
 `;
 
+const issuesWithFilterQuery = `
+  query IssuesFilterQuery {
+    issues(first: 5, filter: { assignee: { null: true } }) {
+      nodes {
+        id
+        identifier
+        title
+      }
+    }
+  }
+`;
+
 // Main validation function
 async function validateAPI() {
   const findings = {
@@ -241,6 +253,26 @@ async function validateAPI() {
         error: issuesResponse.body
       };
       console.log('✗ Issues query failed');
+    }
+
+    // Test 3.5: Issues query with filter
+    console.log('\n3.5. Testing issues query with filter...');
+    const issuesFilterResponse = await makeRequest(issuesWithFilterQuery, 'IssuesFilterQuery');
+
+    if (issuesFilterResponse.status === 200 && issuesFilterResponse.body.data) {
+      findings.queries.issuesWithFilter = {
+        success: true,
+        count: issuesFilterResponse.body.data.issues.nodes.length,
+        sample: issuesFilterResponse.body.data.issues.nodes[0] || null
+      };
+      console.log(`✓ Issues filter query successful: ${issuesFilterResponse.body.data.issues.nodes.length} issues returned`);
+    } else {
+      findings.queries.issuesWithFilter = {
+        success: false,
+        error: issuesFilterResponse.body
+      };
+      console.log('✗ Issues filter query failed');
+      console.log('Error:', JSON.stringify(issuesFilterResponse.body, null, 2));
     }
 
     // Test error handling
