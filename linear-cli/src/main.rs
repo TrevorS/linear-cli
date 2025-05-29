@@ -51,6 +51,15 @@ enum Commands {
         #[arg(long)]
         team: Option<String>,
     },
+    /// Show details for a single issue
+    Issue {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -112,6 +121,27 @@ async fn main() -> Result<()> {
                 println!("{}", output);
             }
         }
+        Commands::Issue { id, json } => match client.get_issue(id).await {
+            Ok(issue) => {
+                let output = if json {
+                    let formatter = JsonFormatter::new(false);
+                    formatter.format_detailed_issue(&issue)?
+                } else {
+                    let formatter = TableFormatter::new(use_color);
+                    formatter.format_detailed_issue(&issue)?
+                };
+                println!("{}", output);
+            }
+            Err(e) => {
+                if e.to_string().contains("Issue not found") {
+                    eprintln!("Error: Issue not found");
+                    eprintln!("Please check the issue identifier format (e.g., ENG-123)");
+                    std::process::exit(1);
+                } else {
+                    return Err(e);
+                }
+            }
+        },
     }
 
     Ok(())
@@ -135,12 +165,25 @@ mod tests {
             .expect("issues command should exist");
         assert_eq!(issues_cmd.get_name(), "issues");
 
+        // Check that we have the issue subcommand
+        let issue_cmd = cli
+            .find_subcommand("issue")
+            .expect("issue command should exist");
+        assert_eq!(issue_cmd.get_name(), "issue");
+
         // Check the limit argument
         let limit_arg = issues_cmd
             .get_arguments()
             .find(|arg| arg.get_id() == "limit")
             .expect("limit argument should exist");
         assert!(!limit_arg.is_required_set());
+
+        // Check the id argument for issue command
+        let id_arg = issue_cmd
+            .get_arguments()
+            .find(|arg| arg.get_id() == "id")
+            .expect("id argument should exist");
+        assert!(id_arg.is_required_set());
     }
 
     #[test]
@@ -162,6 +205,7 @@ mod tests {
                 assert!(!json);
                 assert!(!pretty);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test custom limit
@@ -179,6 +223,7 @@ mod tests {
                 assert!(!json);
                 assert!(!pretty);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test short form
@@ -196,6 +241,7 @@ mod tests {
                 assert!(!json);
                 assert!(!pretty);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON flag
@@ -213,6 +259,7 @@ mod tests {
                 assert!(json);
                 assert!(!pretty);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON with pretty flag
@@ -230,10 +277,50 @@ mod tests {
                 assert!(json);
                 assert!(pretty);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test pretty flag requires json (should fail)
         let result = Cli::try_parse_from(["linear", "issues", "--pretty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_issue_command() {
+        use clap::Parser;
+
+        // Test basic issue command
+        let cli = Cli::try_parse_from(["linear", "issue", "ENG-123"]).unwrap();
+        match cli.command {
+            Commands::Issue { id, json } => {
+                assert_eq!(id, "ENG-123");
+                assert!(!json);
+            }
+            _ => panic!("Expected Issue command"),
+        }
+
+        // Test issue command with JSON
+        let cli = Cli::try_parse_from(["linear", "issue", "ENG-456", "--json"]).unwrap();
+        match cli.command {
+            Commands::Issue { id, json } => {
+                assert_eq!(id, "ENG-456");
+                assert!(json);
+            }
+            _ => panic!("Expected Issue command"),
+        }
+
+        // Test issue command with UUID
+        let cli = Cli::try_parse_from(["linear", "issue", "abc-123-def-456"]).unwrap();
+        match cli.command {
+            Commands::Issue { id, json } => {
+                assert_eq!(id, "abc-123-def-456");
+                assert!(!json);
+            }
+            _ => panic!("Expected Issue command"),
+        }
+
+        // Test issue command without ID (should fail)
+        let result = Cli::try_parse_from(["linear", "issue"]);
         assert!(result.is_err());
     }
 
@@ -254,6 +341,7 @@ mod tests {
                 assert_eq!(status, None);
                 assert_eq!(team, None);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test status filter
@@ -269,6 +357,7 @@ mod tests {
                 assert_eq!(status, Some("done".to_string()));
                 assert_eq!(team, None);
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test team filter
@@ -284,6 +373,7 @@ mod tests {
                 assert_eq!(status, None);
                 assert_eq!(team, Some("ENG".to_string()));
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
 
         // Test combined filters
@@ -309,6 +399,7 @@ mod tests {
                 assert_eq!(status, Some("in progress".to_string()));
                 assert_eq!(team, Some("ENG".to_string()));
             }
+            Commands::Issue { .. } => panic!("Expected Issues command"),
         }
     }
 

@@ -2,7 +2,7 @@
 // ABOUTME: It provides different formatters like table formatting with color support
 
 use anyhow::Result;
-use linear_sdk::Issue;
+use linear_sdk::{DetailedIssue, Issue};
 use owo_colors::OwoColorize;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -11,6 +11,7 @@ use crate::types::IssueStatus;
 
 pub trait OutputFormat {
     fn format_issues(&self, issues: &[Issue]) -> Result<String>;
+    fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String>;
 }
 
 pub struct TableFormatter {
@@ -57,6 +58,85 @@ impl TableFormatter {
             text.to_string()
         }
     }
+
+    fn format_detailed_assignee(&self, assignee: &Option<linear_sdk::IssueAssignee>) -> String {
+        match assignee {
+            Some(a) => {
+                if self.use_color {
+                    format!("{} ({})", a.name.bold(), a.email.dimmed())
+                } else {
+                    format!("{} ({})", a.name, a.email)
+                }
+            }
+            None => {
+                if self.use_color {
+                    "Unassigned".dimmed().to_string()
+                } else {
+                    "Unassigned".to_string()
+                }
+            }
+        }
+    }
+
+    fn format_team(&self, team: &Option<linear_sdk::IssueTeam>) -> String {
+        match team {
+            Some(t) => {
+                if self.use_color {
+                    format!("{} ({})", t.name.cyan(), t.key.dimmed())
+                } else {
+                    format!("{} ({})", t.name, t.key)
+                }
+            }
+            None => "No team".to_string(),
+        }
+    }
+
+    fn format_priority(&self, priority: Option<i64>, priority_label: &Option<String>) -> String {
+        if let Some(label) = priority_label {
+            if self.use_color {
+                match label.as_str() {
+                    "Urgent" => label.red().bold().to_string(),
+                    "High" => label.red().to_string(),
+                    "Medium" => label.yellow().to_string(),
+                    "Low" => label.blue().to_string(),
+                    _ => label.to_string(),
+                }
+            } else {
+                label.to_string()
+            }
+        } else if let Some(p) = priority {
+            p.to_string()
+        } else {
+            "None".to_string()
+        }
+    }
+
+    fn format_labels(&self, labels: &[linear_sdk::IssueLabel]) -> String {
+        if labels.is_empty() {
+            return "None".to_string();
+        }
+
+        labels
+            .iter()
+            .map(|l| {
+                if self.use_color {
+                    // For now, just use a simple colored format
+                    format!("{}", l.name.cyan())
+                } else {
+                    l.name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn format_datetime(&self, datetime: &str) -> String {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(datetime) {
+            parsed.format("%Y-%m-%d %H:%M").to_string()
+        } else {
+            datetime.to_string()
+        }
+    }
 }
 
 pub struct JsonFormatter {
@@ -75,6 +155,14 @@ impl OutputFormat for JsonFormatter {
             Ok(serde_json::to_string_pretty(issues)?)
         } else {
             Ok(serde_json::to_string(issues)?)
+        }
+    }
+
+    fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String> {
+        if self.pretty {
+            Ok(serde_json::to_string_pretty(issue)?)
+        } else {
+            Ok(serde_json::to_string(issue)?)
         }
     }
 }
@@ -106,6 +194,60 @@ impl OutputFormat for TableFormatter {
         let mut table = Table::new(rows);
         table.with(Style::psql());
         Ok(table.to_string())
+    }
+
+    fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String> {
+        let border_line = "─".repeat(50);
+        let title_line = if self.use_color {
+            format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
+        } else {
+            format!("{}: {}", issue.identifier, issue.title)
+        };
+
+        let mut output = vec![
+            border_line.clone(),
+            title_line,
+            border_line,
+            format!("Status:     {}", self.format_status(&issue.state.name)),
+            format!(
+                "Assignee:   {}",
+                self.format_detailed_assignee(&issue.assignee)
+            ),
+            format!("Team:       {}", self.format_team(&issue.team)),
+        ];
+
+        if let Some(project) = &issue.project {
+            output.push(format!("Project:    {}", project.name));
+        }
+
+        output.push(format!(
+            "Priority:   {}",
+            self.format_priority(issue.priority, &issue.priority_label)
+        ));
+
+        if let Some(description) = &issue.description {
+            output.push(String::new());
+            output.push("Description:".to_string());
+            output.push(description.clone());
+        }
+
+        output.push(String::new());
+        output.push(format!("Labels: {}", self.format_labels(&issue.labels)));
+
+        output.push(String::new());
+        output.push(format!(
+            "Created: {}",
+            self.format_datetime(&issue.created_at)
+        ));
+        output.push(format!(
+            "Updated: {}",
+            self.format_datetime(&issue.updated_at)
+        ));
+
+        output.push(String::new());
+        output.push(format!("View in Linear: {}", issue.url));
+
+        Ok(output.join("\n"))
     }
 }
 
@@ -335,5 +477,141 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed.is_array());
         assert_eq!(parsed.as_array().unwrap().len(), 0);
+    }
+
+    fn create_test_detailed_issue() -> DetailedIssue {
+        use linear_sdk::*;
+
+        DetailedIssue {
+            id: "issue-id-123".to_string(),
+            identifier: "ENG-123".to_string(),
+            title: "Fix login race condition".to_string(),
+            description: Some("Users are experiencing race conditions when logging in simultaneously from multiple devices.".to_string()),
+            state: IssueState {
+                name: "In Progress".to_string(),
+                type_: "started".to_string(),
+            },
+            assignee: Some(IssueAssignee {
+                name: "John Doe".to_string(),
+                email: "john@example.com".to_string(),
+            }),
+            team: Some(IssueTeam {
+                key: "ENG".to_string(),
+                name: "Engineering".to_string(),
+            }),
+            project: Some(IssueProject {
+                name: "Web App".to_string(),
+            }),
+            labels: vec![
+                IssueLabel {
+                    name: "bug".to_string(),
+                    color: "#ff0000".to_string(),
+                },
+                IssueLabel {
+                    name: "authentication".to_string(),
+                    color: "#00ff00".to_string(),
+                },
+            ],
+            priority: Some(2),
+            priority_label: Some("High".to_string()),
+            created_at: "2024-01-15T10:30:00Z".to_string(),
+            updated_at: "2024-01-16T14:45:00Z".to_string(),
+            url: "https://linear.app/test/issue/ENG-123".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_detailed_issue_table_format() {
+        let formatter = TableFormatter::new(false);
+        let issue = create_test_detailed_issue();
+
+        let result = formatter.format_detailed_issue(&issue).unwrap();
+
+        // Check that key elements are present
+        assert!(result.contains("ENG-123: Fix login race condition"));
+        assert!(result.contains("Status:     In Progress"));
+        assert!(result.contains("Assignee:   John Doe (john@example.com)"));
+        assert!(result.contains("Team:       Engineering (ENG)"));
+        assert!(result.contains("Project:    Web App"));
+        assert!(result.contains("Priority:   High"));
+        assert!(result.contains("Description:"));
+        assert!(result.contains("Users are experiencing race conditions"));
+        assert!(result.contains("Labels: bug, authentication"));
+        assert!(result.contains("Created:"));
+        assert!(result.contains("Updated:"));
+        assert!(result.contains("View in Linear: https://linear.app/test/issue/ENG-123"));
+    }
+
+    #[test]
+    fn test_detailed_issue_table_format_colored() {
+        let formatter = TableFormatter::new(true);
+        let issue = create_test_detailed_issue();
+
+        let result = formatter.format_detailed_issue(&issue).unwrap();
+
+        // Should still contain the basic text content
+        assert!(result.contains("ENG-123"));
+        assert!(result.contains("Fix login race condition"));
+        assert!(result.contains("John Doe"));
+        assert!(result.contains("Engineering"));
+    }
+
+    #[test]
+    fn test_detailed_issue_json_format() {
+        let formatter = JsonFormatter::new(false);
+        let issue = create_test_detailed_issue();
+
+        let result = formatter.format_detailed_issue(&issue).unwrap();
+
+        // Verify it's valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed.is_object());
+
+        // Check key fields
+        assert_eq!(parsed["identifier"], "ENG-123");
+        assert_eq!(parsed["title"], "Fix login race condition");
+        assert_eq!(parsed["state"]["name"], "In Progress");
+        assert_eq!(parsed["assignee"]["name"], "John Doe");
+        assert_eq!(parsed["team"]["name"], "Engineering");
+        assert_eq!(parsed["priorityLabel"], "High");
+        assert!(parsed["labels"].is_array());
+        assert_eq!(parsed["labels"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_detailed_issue_minimal_fields() {
+        use linear_sdk::*;
+
+        let minimal_issue = DetailedIssue {
+            id: "issue-id-456".to_string(),
+            identifier: "ENG-456".to_string(),
+            title: "Simple issue".to_string(),
+            description: None,
+            state: IssueState {
+                name: "Todo".to_string(),
+                type_: "unstarted".to_string(),
+            },
+            assignee: None,
+            team: None,
+            project: None,
+            labels: vec![],
+            priority: None,
+            priority_label: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+            url: "https://linear.app/test/issue/ENG-456".to_string(),
+        };
+
+        let formatter = TableFormatter::new(false);
+        let result = formatter.format_detailed_issue(&minimal_issue).unwrap();
+
+        // Check that it handles missing fields gracefully
+        assert!(result.contains("ENG-456: Simple issue"));
+        assert!(result.contains("Assignee:   Unassigned"));
+        assert!(result.contains("Team:       No team"));
+        assert!(result.contains("Priority:   None"));
+        assert!(result.contains("Labels: None"));
+        assert!(!result.contains("Project:"));
+        assert!(!result.contains("Description:"));
     }
 }
