@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     let spinner = create_spinner("Connecting to Linear...");
     let client = match LinearClient::new_with_verbose(api_key, cli.verbose) {
         Ok(client) => {
-            spinner.finish_with_message("Connected to Linear");
+            spinner.finish_and_clear();
             client
         }
         Err(e) => {
