@@ -1,0 +1,11 @@
+{
+  "data": {
+    "viewer": {
+      "id": "3f4d6b8e-9c2a-4b1e-8f5d-7a9c0e3d1b4f",
+      "name": "John Doe",
+      "email": "john.doe@example.com",
+      "admin": false,
+      "createdAt": "2023-01-01T00:00:00.000Z"
+    }
+  }
+}

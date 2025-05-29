@@ -1,0 +1,39 @@
+# ABOUTME: Dependabot configuration for automated dependency updates
+# ABOUTME: Monitors and creates PRs for outdated Cargo and GitHub Actions dependencies
+
+version: 2
+updates:
+  # Enable version updates for Rust dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "TrevorS"
+    labels:
+      - "dependencies"
+      - "rust"
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "TrevorS"
+    labels:
+      - "dependencies"
+      - "github-actions"
