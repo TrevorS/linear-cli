@@ -172,10 +172,10 @@ Implement the smallest possible working Linear CLI that actually queries the API
 4. Add error handling that shows:
    ```
    Error: No LINEAR_API_KEY environment variable found
-   
+
    Please set your Linear API key:
    export LINEAR_API_KEY=lin_api_xxxxx
-   
+
    Get your API key from: https://linear.app/settings/api
    ```
 
@@ -183,7 +183,7 @@ Implement the smallest possible working Linear CLI that actually queries the API
    - Use `env_logger` for now
    - Log HTTP requests/responses when RUST_LOG=debug
 
-Test manually: 
+Test manually:
 - `LINEAR_API_KEY=xxx cargo run -p linear-cli` should show your Linear user info
 - Without API key should show helpful error
 ```
@@ -209,11 +209,11 @@ Set up continuous integration and testing infrastructure before adding more feat
    #[cfg(test)]
    pub mod test_helpers {
        use mockito;
-       
+
        pub fn mock_linear_server() -> mockito::ServerGuard {
            // Return configured mock server
        }
-       
+
        pub fn mock_viewer_response() -> serde_json::Value {
            // Return realistic response
        }
@@ -235,13 +235,13 @@ Set up continuous integration and testing infrastructure before adding more feat
    ```makefile
    test:
        cargo test
-   
+
    test-integration:
        cargo test --features integration-tests -- --ignored
-   
+
    fmt:
        cargo fmt --all
-   
+
    lint:
        cargo clippy -- -D warnings
    ```
@@ -283,7 +283,7 @@ Add the first real feature: listing issues with a proper CLI structure.
        #[command(subcommand)]
        command: Commands,
    }
-   
+
    #[derive(Subcommand)]
    enum Commands {
        /// List issues
@@ -325,7 +325,7 @@ Add beautiful table output for issues using the tabled crate.
    pub trait OutputFormat {
        fn format_issues(&self, issues: &[Issue]) -> Result<String>;
    }
-   
+
    // src/output/table.rs
    pub struct TableFormatter {
        use_color: bool,
@@ -345,7 +345,7 @@ Add beautiful table output for issues using the tabled crate.
        /// Disable colored output
        #[arg(long, global = true)]
        no_color: bool,
-       
+
        #[command(subcommand)]
        command: Commands,
    }
@@ -399,11 +399,11 @@ Add JSON output format for scriptability.
    Issues {
        #[arg(short, long, default_value = "20")]
        limit: i32,
-       
+
        /// Output as JSON
        #[arg(long)]
        json: bool,
-       
+
        /// Pretty print JSON output
        #[arg(long, requires = "json")]
        pretty: bool,
@@ -443,7 +443,7 @@ Add filtering capabilities to the issues command.
      issues(first: $first, filter: $filter) {
        nodes {
          id
-         identifier  
+         identifier
          title
          state { name }
          assignee { id name }
@@ -458,19 +458,19 @@ Add filtering capabilities to the issues command.
    Issues {
        #[arg(short, long, default_value = "20")]
        limit: i32,
-       
+
        /// Filter by assignee (use "me" for yourself)
        #[arg(long)]
        assignee: Option<String>,
-       
+
        /// Filter by status (case insensitive)
        #[arg(long)]
        status: Option<String>,
-       
+
        /// Filter by team
        #[arg(long)]
        team: Option<String>,
-       
+
        // ... existing format flags
    }
    ```
@@ -481,7 +481,7 @@ Add filtering capabilities to the issues command.
 
 4. Add status normalization:
    - "todo" → "Todo"
-   - "in progress" → "In Progress" 
+   - "in progress" → "In Progress"
    - "done" → "Done"
    - Show error for unknown statuses
 
@@ -539,12 +539,12 @@ Implement detailed view for a single issue.
    #[derive(Subcommand)]
    enum Commands {
        Issues { /* ... */ },
-       
+
        /// Show details for a single issue
        Issue {
            /// Issue identifier (e.g., ENG-123)
            id: String,
-           
+
            /// Output as JSON
            #[arg(long)]
            json: bool,
@@ -562,16 +562,16 @@ Implement detailed view for a single issue.
    Team:      Engineering (ENG)
    Project:   Web App
    Priority:  High
-   
+
    Description:
    Users are experiencing race conditions when logging in
    simultaneously from multiple devices.
-   
+
    Labels: bug, authentication
-   
+
    Created: 2024-01-15 10:30 AM
    Updated: 2024-01-16 2:45 PM
-   
+
    View in Linear: https://linear.app/...
    ```
 
@@ -601,13 +601,13 @@ Establish consistent error handling and improve user experience.
    pub enum LinearError {
        #[error("Authentication failed. Check your LINEAR_API_KEY")]
        Auth,
-       
+
        #[error("Issue {0} not found")]
        IssueNotFound(String),
-       
+
        #[error("Network error: {0}")]
        Network(String),
-       
+
        #[error("GraphQL error: {0}")]
        GraphQL(String),
    }
@@ -617,10 +617,10 @@ Establish consistent error handling and improve user experience.
    ```rust
    fn print_error(err: &LinearError) {
        eprintln!("{}: {}", "Error".red().bold(), err);
-       
+
        match err {
            LinearError::Auth => {
-               eprintln!("\nGet your API key from: {}", 
+               eprintln!("\nGet your API key from: {}",
                    "https://linear.app/settings/api".cyan());
            }
            // ... helpful context for each error type
@@ -736,7 +736,7 @@ Expand the CLI with more read operations for Phase 2.
        }
      }
    }
-   
+
    query ListTeams {
      teams {
        nodes {
@@ -747,7 +747,7 @@ Expand the CLI with more read operations for Phase 2.
        }
      }
    }
-   
+
    query GetComments($issueId: String!) {
      issue(id: $issueId) {
        comments {
@@ -769,18 +769,18 @@ Expand the CLI with more read operations for Phase 2.
        #[arg(long)]
        json: bool,
    },
-   
+
    /// List all teams
    Teams {
        #[arg(long)]
        json: bool,
    },
-   
+
    /// Show comments on an issue
    Comments {
        /// Issue identifier
        issue_id: String,
-       
+
        #[arg(long)]
        json: bool,
    },
@@ -831,11 +831,11 @@ Implement full-text search across Linear.
    Search {
        /// Search query
        query: String,
-       
+
        /// Limit results per type
        #[arg(long, default_value = "10")]
        limit: i32,
-       
+
        #[arg(long)]
        json: bool,
    }
@@ -853,11 +853,11 @@ Implement full-text search across Linear.
    ─────────────────────
    ENG-123  Fix login race condition     In Progress
    ENG-125  Login timeout issues          Todo
-   
+
    Projects (1 result):
    ──────────────────
    Login System Refactor
-   
+
    Comments (2 results):
    ──────────────────
    In ENG-120: "The login fix should address..."
@@ -903,23 +903,23 @@ Begin Phase 3 with the first write operation.
        /// Issue title
        #[arg(short, long)]
        title: Option<String>,
-       
+
        /// Team key (e.g., ENG)
        #[arg(short = 'T', long)]
        team: Option<String>,
-       
+
        /// Description
        #[arg(short, long)]
        description: Option<String>,
-       
+
        /// Assignee email or "me"
        #[arg(short, long)]
        assignee: Option<String>,
-       
+
        /// Priority (urgent, high, medium, low)
        #[arg(short, long)]
        priority: Option<String>,
-       
+
        /// Open in browser after creation
        #[arg(long)]
        open: bool,
@@ -940,10 +940,10 @@ Begin Phase 3 with the first write operation.
 5. Show success result:
    ```
    ✓ Created issue ENG-126
-   
+
    Title: Implement user settings
    URL: https://linear.app/company/issue/ENG-126
-   
+
    Opening in browser...
    ```
 
@@ -983,19 +983,19 @@ Complete write operations with update functionality.
    Update {
        /// Issue identifier
        id: String,
-       
+
        /// New status
        #[arg(long)]
        status: Option<String>,
-       
+
        /// New assignee
        #[arg(long)]
        assignee: Option<String>,
-       
+
        /// New priority
        #[arg(long)]
        priority: Option<String>,
-       
+
        /// New title
        #[arg(long)]
        title: Option<String>,
@@ -1009,8 +1009,8 @@ Complete write operations with update functionality.
        /// Issue identifier
        id: String,
    },
-   
-   /// Reopen an issue  
+
+   /// Reopen an issue
    Reopen {
        /// Issue identifier
        id: String,
@@ -1023,7 +1023,7 @@ Complete write operations with update functionality.
    Comment {
        /// Issue identifier
        id: String,
-       
+
        /// Comment text (or read from stdin)
        message: Option<String>,
    }
@@ -1039,7 +1039,7 @@ Complete write operations with update functionality.
    Updating ENG-126:
    Status: In Progress → Done
    Assignee: John Doe → Jane Smith
-   
+
    Confirm? [y/N]
    ```
 
@@ -1058,7 +1058,7 @@ Add bulk operations for efficiency.
        #[command(subcommand)]
        action: BulkAction,
    }
-   
+
    #[derive(Subcommand)]
    enum BulkAction {
        /// Update issues matching filters
@@ -1066,20 +1066,20 @@ Add bulk operations for efficiency.
            // Same filters as 'issues' command
            #[arg(long)]
            assignee: Option<String>,
-           
+
            #[arg(long)]
            status: Option<String>,
-           
+
            #[arg(long)]
            team: Option<String>,
-           
+
            // Updates to apply
            #[arg(long)]
            set_status: Option<String>,
-           
+
            #[arg(long)]
            set_assignee: Option<String>,
-           
+
            /// Skip confirmation
            #[arg(long)]
            force: bool,
@@ -1090,16 +1090,16 @@ Add bulk operations for efficiency.
 2. Implement preview mode:
    ```
    Found 5 issues matching filters:
-   
+
    ENG-123  Fix login race condition
    ENG-124  Implement OAuth flow
    ENG-125  Add user preferences
    ENG-126  Refactor auth module
    ENG-127  Update documentation
-   
+
    Will update:
    - Status: Todo → In Progress
-   
+
    Continue? [y/N]
    ```
 
@@ -1153,7 +1153,7 @@ Add configuration file support and shell completions.
    default_team = "ENG"
    default_assignee = "me"
    preferred_format = "table"
-   
+
    [aliases]
    my = ["issues", "--assignee", "me"]
    todo = ["issues", "--status", "todo", "--assignee", "me"]
@@ -1174,10 +1174,10 @@ Add configuration file support and shell completions.
    ```bash
    # Bash
    linear completions bash > ~/.local/share/bash-completion/completions/linear
-   
+
    # Zsh
    linear completions zsh > ~/.zfunc/_linear
-   
+
    # Fish
    linear completions fish > ~/.config/fish/completions/linear.fish
    ```
@@ -1220,7 +1220,7 @@ Optimize performance and prepare for distribution.
    on:
      push:
        tags: ['v*']
-   
+
    jobs:
      release:
        # Build for macOS (Intel and Apple Silicon)
@@ -1263,7 +1263,7 @@ This completes the Linear CLI with professional polish.
 
 ### Key Principles
 1. **Always have working software** - Each step produces a usable result
-2. **Test continuously** - Both unit and integration tests from the start  
+2. **Test continuously** - Both unit and integration tests from the start
 3. **Fail fast** - Discover integration issues immediately
 4. **User-focused** - Helpful errors and beautiful output
 5. **Progressive enhancement** - Start simple, add complexity gradually

@@ -34,7 +34,7 @@ From the implementation plan (Prompt 18), we need to:
   on:
     push:
       tags: ['v*']
-  
+
   jobs:
     release:
       # Build for macOS (Intel and Apple Silicon)

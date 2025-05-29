@@ -17,7 +17,7 @@ From the implementation plan (Prompt 8), we need to:
     issues(first: $first, filter: $filter) {
       nodes {
         id
-        identifier  
+        identifier
         title
         state { name }
         assignee { id name }
@@ -32,11 +32,11 @@ From the implementation plan (Prompt 8), we need to:
       /// Filter by assignee (use "me" for yourself)
       #[arg(long)]
       assignee: Option<String>,
-      
+
       /// Filter by status (case insensitive)
       #[arg(long)]
       status: Option<String>,
-      
+
       /// Filter by team
       #[arg(long)]
       team: Option<String>,

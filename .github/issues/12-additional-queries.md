@@ -24,7 +24,7 @@ From the implementation plan (Prompt 12), we need to:
       }
     }
   }
-  
+
   query ListTeams {
     teams {
       nodes {
@@ -35,7 +35,7 @@ From the implementation plan (Prompt 12), we need to:
       }
     }
   }
-  
+
   query GetComments($issueId: String!) {
     issue(id: $issueId) {
       comments {
@@ -56,18 +56,18 @@ From the implementation plan (Prompt 12), we need to:
       #[arg(long)]
       json: bool,
   },
-  
+
   /// List all teams
   Teams {
       #[arg(long)]
       json: bool,
   },
-  
+
   /// Show comments on an issue
   Comments {
       /// Issue identifier
       issue_id: String,
-      
+
       #[arg(long)]
       json: bool,
   },
@@ -94,7 +94,7 @@ Teams:
  ─────────────────────────────
  ENG   Engineering   12
  PROD  Product       5
- 
+
 Comments on ENG-123:
 ────────────────────
 John Doe - 2024-01-15 10:30 AM

@@ -33,10 +33,10 @@ From the implementation plan (Prompt 3), we need to:
   - [ ] Show helpful error if no API key:
     ```
     Error: No LINEAR_API_KEY environment variable found
-    
+
     Please set your Linear API key:
     export LINEAR_API_KEY=lin_api_xxxxx
-    
+
     Get your API key from: https://linear.app/settings/api
     ```
 - [ ] Add logging with env_logger:

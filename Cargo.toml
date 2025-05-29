@@ -1,6 +1,3 @@
-[package]
-name = "linear-cli"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = ["xtask", "linear-sdk", "linear-cli"]
+resolver = "2"

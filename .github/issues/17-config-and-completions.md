@@ -30,7 +30,7 @@ From the implementation plan (Prompt 17), we need to:
   default_team = "ENG"
   default_assignee = "me"
   preferred_format = "table"
-  
+
   [aliases]
   my = ["issues", "--assignee", "me"]
   todo = ["issues", "--status", "todo", "--assignee", "me"]
@@ -49,10 +49,10 @@ From the implementation plan (Prompt 17), we need to:
   ```bash
   # Bash
   linear completions bash > ~/.local/share/bash-completion/completions/linear
-  
+
   # Zsh
   linear completions zsh > ~/.zfunc/_linear
-  
+
   # Fish
   linear completions fish > ~/.config/fish/completions/linear.fish
   ```

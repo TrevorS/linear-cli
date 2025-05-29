@@ -13,32 +13,40 @@ Linear CLI is a command-line interface for Linear (issue tracking/project manage
 cargo build
 
 # Run tests
-cargo test
+cargo test --workspace
 
 # Run the CLI
-cargo run
+cargo run -p linear-cli
 
 # Run with specific arguments
-cargo run -- [args]
+cargo run -p linear-cli -- [args]
 
 # Build release version
-cargo build --release
+cargo build --release --workspace
 
 # Check code without building
-cargo check
+cargo check --workspace
 
 # Format code
-cargo fmt
+cargo fmt --all
 
 # Run linter
-cargo clippy
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Set up pre-commit hooks
+uv tool install pre-commit
+pre-commit install
+
+# Download Linear GraphQL schema
+cargo run -p xtask -- schema --api-key YOUR_API_KEY
 ```
 
 ## Architecture
 
-The project is structured as a Cargo workspace (planned) with:
-- `linear-cli`: Main CLI binary crate
-- `linear-sdk`: Reusable Linear API client library (planned)
+The project is structured as a Cargo workspace with:
+- `linear-cli/`: Main CLI binary crate
+- `linear-sdk/`: Reusable Linear API client library
+- `xtask/`: Build automation and schema management
 
 ### Key Implementation Phases (from docs/plan.md):
 1. **Phase 0**: Initial setup and validation spike
