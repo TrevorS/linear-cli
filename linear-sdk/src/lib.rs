@@ -8,6 +8,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 type DateTimeOrDuration = String;
 type TimelessDateOrDuration = String;
 type Duration = String;
+type DateTime = String;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -30,6 +31,15 @@ pub struct Viewer;
 )]
 pub struct ListIssues;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/issue.graphql",
+    response_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct GetIssue;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -42,6 +52,60 @@ pub struct Issue {
     pub assignee: Option<String>,
     pub assignee_id: Option<String>,
     pub team: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailedIssue {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub state: IssueState,
+    pub assignee: Option<IssueAssignee>,
+    pub team: Option<IssueTeam>,
+    pub project: Option<IssueProject>,
+    pub labels: Vec<IssueLabel>,
+    pub priority: Option<i64>,
+    pub priority_label: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueState {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueAssignee {
+    pub name: String,
+    pub email: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTeam {
+    pub key: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueProject {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueLabel {
+    pub name: String,
+    pub color: String,
 }
 
 pub struct LinearClient {
@@ -419,6 +483,63 @@ impl LinearClient {
             .collect();
 
         Ok(issues)
+    }
+
+    pub async fn get_issue(&self, id: String) -> Result<DetailedIssue> {
+        let request_body = GetIssue::build_query(get_issue::Variables { id });
+
+        let response = self
+            .client
+            .post(format!("{}/graphql", self.base_url))
+            .json(&request_body)
+            .send()
+            .await?;
+
+        let response_body: Response<get_issue::ResponseData> = response.json().await?;
+
+        if let Some(errors) = response_body.errors {
+            return Err(anyhow::anyhow!("GraphQL errors: {:?}", errors));
+        }
+
+        let data = response_body
+            .data
+            .ok_or_else(|| anyhow::anyhow!("No data in response"))?;
+
+        let issue = data.issue;
+
+        Ok(DetailedIssue {
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            description: issue.description,
+            state: IssueState {
+                name: issue.state.name,
+                type_: issue.state.type_,
+            },
+            assignee: issue.assignee.map(|a| IssueAssignee {
+                name: a.name,
+                email: a.email,
+            }),
+            team: Some(IssueTeam {
+                key: issue.team.key,
+                name: issue.team.name,
+            }),
+            project: issue.project.map(|p| IssueProject { name: p.name }),
+            labels: issue
+                .labels
+                .nodes
+                .into_iter()
+                .map(|l| IssueLabel {
+                    name: l.name,
+                    color: l.color,
+                })
+                .collect(),
+            priority: Some(issue.priority as i64),
+            priority_label: Some(issue.priority_label),
+            created_at: issue.created_at,
+            updated_at: issue.updated_at,
+            url: issue.url,
+        })
     }
 }
 
@@ -829,5 +950,141 @@ mod tests {
         assert!(result.is_ok());
         let filter = result.unwrap();
         assert!(filter.is_none());
+    }
+
+    #[test]
+    fn test_get_issue_query_builds() {
+        let _query = GetIssue::build_query(get_issue::Variables {
+            id: "ENG-123".to_string(),
+        });
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_success() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_detailed_issue_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.get_issue("ENG-123".to_string()).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+
+        assert_eq!(issue.identifier, "ENG-123");
+        assert_eq!(issue.title, "Fix login race condition");
+        assert_eq!(issue.state.name, "In Progress");
+        assert_eq!(issue.state.type_, "started");
+
+        assert!(issue.assignee.is_some());
+        let assignee = issue.assignee.unwrap();
+        assert_eq!(assignee.name, "John Doe");
+        assert_eq!(assignee.email, "john@example.com");
+
+        assert!(issue.team.is_some());
+        let team = issue.team.unwrap();
+        assert_eq!(team.key, "ENG");
+        assert_eq!(team.name, "Engineering");
+
+        assert!(issue.project.is_some());
+        assert_eq!(issue.project.unwrap().name, "Web App");
+
+        assert_eq!(issue.labels.len(), 2);
+        assert_eq!(issue.labels[0].name, "bug");
+        assert_eq!(issue.labels[1].name, "authentication");
+
+        assert_eq!(issue.priority, Some(2));
+        assert_eq!(issue.priority_label, Some("High".to_string()));
+
+        assert!(issue.description.is_some());
+        assert!(
+            issue
+                .description
+                .unwrap()
+                .contains("race conditions when logging in")
+        );
+
+        assert_eq!(issue.url, "https://linear.app/test/issue/ENG-123");
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_minimal_response() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_minimal_issue_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.get_issue("ENG-456".to_string()).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+
+        assert_eq!(issue.identifier, "ENG-456");
+        assert_eq!(issue.title, "Simple issue");
+        assert_eq!(issue.state.name, "Todo");
+        assert!(issue.assignee.is_none());
+        assert!(issue.project.is_none());
+        assert!(issue.description.is_none());
+        assert_eq!(issue.labels.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_issue_error() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_graphql_error_response().to_string())
+            .create();
+
+        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let result = client.get_issue("INVALID".to_string()).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("GraphQL errors"));
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "integration-tests")]
+    async fn test_get_issue_real_api() {
+        let api_key = std::env::var("LINEAR_API_KEY")
+            .expect("LINEAR_API_KEY must be set for integration tests");
+
+        let client = LinearClient::new(api_key).expect("Failed to create client");
+
+        // Try to get a specific issue - this will vary by team
+        // In a real test, you'd use a known issue ID
+        let result = client.get_issue("ENG-1".to_string()).await;
+
+        // The test should either succeed or fail with "Issue not found"
+        // but not with authentication or network errors
+        match result {
+            Ok(_) => {
+                // Success case - issue exists
+            }
+            Err(e) => {
+                // Should be a GraphQL error about the issue not existing
+                assert!(
+                    e.to_string().contains("GraphQL errors")
+                        || e.to_string().contains("Issue not found")
+                );
+            }
+        }
     }
 }

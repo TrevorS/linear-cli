@@ -122,3 +122,90 @@ pub fn mock_graphql_error_response() -> serde_json::Value {
         ]
     })
 }
+
+#[cfg(test)]
+pub fn mock_detailed_issue_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issue": {
+                "id": "issue-detailed-123",
+                "identifier": "ENG-123",
+                "title": "Fix login race condition",
+                "description": "Users are experiencing race conditions when logging in simultaneously from multiple devices.",
+                "state": {
+                    "name": "In Progress",
+                    "type": "started"
+                },
+                "assignee": {
+                    "name": "John Doe",
+                    "email": "john@example.com"
+                },
+                "team": {
+                    "key": "ENG",
+                    "name": "Engineering"
+                },
+                "project": {
+                    "name": "Web App"
+                },
+                "labels": {
+                    "nodes": [
+                        {
+                            "name": "bug",
+                            "color": "#ff0000"
+                        },
+                        {
+                            "name": "authentication",
+                            "color": "#00ff00"
+                        }
+                    ]
+                },
+                "priority": 2.0,
+                "priorityLabel": "High",
+                "createdAt": "2024-01-15T10:30:00Z",
+                "updatedAt": "2024-01-16T14:45:00Z",
+                "url": "https://linear.app/test/issue/ENG-123"
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_minimal_issue_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issue": {
+                "id": "issue-minimal-456",
+                "identifier": "ENG-456",
+                "title": "Simple issue",
+                "description": null,
+                "state": {
+                    "name": "Todo",
+                    "type": "unstarted"
+                },
+                "assignee": null,
+                "team": {
+                    "key": "ENG",
+                    "name": "Engineering"
+                },
+                "project": null,
+                "labels": {
+                    "nodes": []
+                },
+                "priority": 0.0,
+                "priorityLabel": "None",
+                "createdAt": "2024-01-01T00:00:00Z",
+                "updatedAt": "2024-01-01T00:00:00Z",
+                "url": "https://linear.app/test/issue/ENG-456"
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_issue_not_found_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issue": null
+        }
+    })
+}
