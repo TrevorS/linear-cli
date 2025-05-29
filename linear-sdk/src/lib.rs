@@ -1,9 +1,16 @@
 // ABOUTME: Linear SDK library providing type-safe GraphQL client for Linear API
 // ABOUTME: Includes authentication, queries, mutations, and generated types
 
-use anyhow::Result;
 use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+
+pub mod error;
+pub mod retry;
+
+pub use error::LinearError;
+pub use retry::RetryConfig;
+
+pub type Result<T> = std::result::Result<T, LinearError>;
 // Custom scalar types used by Linear's GraphQL schema
 type DateTimeOrDuration = String;
 type TimelessDateOrDuration = String;
@@ -112,6 +119,8 @@ pub struct LinearClient {
     client: reqwest::Client,
     base_url: String,
     _api_key: String,
+    verbose: bool,
+    retry_config: retry::RetryConfig,
 }
 
 pub struct IssueFilters {
@@ -121,6 +130,16 @@ pub struct IssueFilters {
 }
 
 impl LinearClient {
+    fn extract_issue_id(&self, error_string: &str) -> String {
+        // Try to extract issue ID from error message
+        if let Some(start) = error_string.find("Issue ") {
+            if let Some(end) = error_string[start + 6..].find(" ") {
+                return error_string[start + 6..start + 6 + end].to_string();
+            }
+        }
+        "unknown".to_string()
+    }
+
     async fn build_issue_filter(
         &self,
         filters: &IssueFilters,
@@ -384,42 +403,83 @@ impl LinearClient {
         Self::with_base_url(api_key, "https://api.linear.app".to_string())
     }
 
+    pub fn new_with_verbose(api_key: String, verbose: bool) -> Result<Self> {
+        Self::with_base_url_and_verbose(api_key, "https://api.linear.app".to_string(), verbose)
+    }
+
     pub fn with_base_url(api_key: String, base_url: String) -> Result<Self> {
+        Self::with_base_url_and_verbose(api_key, base_url, false)
+    }
+
+    pub fn with_base_url_and_verbose(
+        api_key: String,
+        base_url: String,
+        verbose: bool,
+    ) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&api_key)?);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&api_key).map_err(|_| LinearError::Auth)?,
+        );
         headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(30))
-            .build()?;
+            .build()
+            .map_err(LinearError::from)?;
 
         Ok(Self {
             client,
             base_url,
             _api_key: api_key,
+            verbose,
+            retry_config: retry::RetryConfig::default(),
         })
     }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {
         let request_body = Viewer::build_query(viewer::Variables {});
 
-        let response = self
-            .client
-            .post(format!("{}/graphql", self.base_url))
-            .json(&request_body)
-            .send()
-            .await?;
-
-        let response_body: Response<viewer::ResponseData> = response.json().await?;
-
-        if let Some(errors) = response_body.errors {
-            return Err(anyhow::anyhow!("GraphQL errors: {:?}", errors));
+        if self.verbose {
+            eprintln!("Sending GraphQL query: viewer");
+            eprintln!(
+                "Request body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
         }
 
-        response_body
-            .data
-            .ok_or_else(|| anyhow::anyhow!("No data in response"))
+        retry::retry_with_backoff(&self.retry_config, self.verbose, || {
+            let client = &self.client;
+            let base_url = &self.base_url;
+            let request_body = &request_body;
+            let verbose = self.verbose;
+
+            async move {
+                let start_time = std::time::Instant::now();
+                let response = client
+                    .post(format!("{}/graphql", base_url))
+                    .json(request_body)
+                    .send()
+                    .await
+                    .map_err(LinearError::from)?;
+
+                if verbose {
+                    eprintln!("Request completed in {:?}", start_time.elapsed());
+                    eprintln!("Response status: {}", response.status());
+                }
+
+                let response_body: Response<viewer::ResponseData> =
+                    response.json().await.map_err(LinearError::from)?;
+
+                if let Some(errors) = response_body.errors {
+                    return Err(LinearError::GraphQL(format!("{:?}", errors)));
+                }
+
+                response_body.data.ok_or(LinearError::InvalidResponse)
+            }
+        })
+        .await
     }
 
     pub async fn list_issues(&self, limit: i32) -> Result<Vec<Issue>> {
@@ -450,22 +510,36 @@ impl LinearClient {
             filter,
         });
 
+        if self.verbose {
+            eprintln!("Sending GraphQL query: listIssues (limit: {})", limit);
+            eprintln!(
+                "Request body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
+        }
+
+        let start_time = std::time::Instant::now();
         let response = self
             .client
             .post(format!("{}/graphql", self.base_url))
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(LinearError::from)?;
 
-        let response_body: Response<list_issues::ResponseData> = response.json().await?;
-
-        if let Some(errors) = response_body.errors {
-            return Err(anyhow::anyhow!("GraphQL errors: {:?}", errors));
+        if self.verbose {
+            eprintln!("Request completed in {:?}", start_time.elapsed());
+            eprintln!("Response status: {}", response.status());
         }
 
-        let data = response_body
-            .data
-            .ok_or_else(|| anyhow::anyhow!("No data in response"))?;
+        let response_body: Response<list_issues::ResponseData> =
+            response.json().await.map_err(LinearError::from)?;
+
+        if let Some(errors) = response_body.errors {
+            return Err(LinearError::GraphQL(format!("{:?}", errors)));
+        }
+
+        let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
 
         let issues = data
             .issues
@@ -486,24 +560,45 @@ impl LinearClient {
     }
 
     pub async fn get_issue(&self, id: String) -> Result<DetailedIssue> {
-        let request_body = GetIssue::build_query(get_issue::Variables { id });
+        let request_body = GetIssue::build_query(get_issue::Variables { id: id.clone() });
 
+        if self.verbose {
+            eprintln!("Sending GraphQL query: getIssue (id: {})", id);
+            eprintln!(
+                "Request body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
+        }
+
+        let start_time = std::time::Instant::now();
         let response = self
             .client
             .post(format!("{}/graphql", self.base_url))
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(LinearError::from)?;
 
-        let response_body: Response<get_issue::ResponseData> = response.json().await?;
-
-        if let Some(errors) = response_body.errors {
-            return Err(anyhow::anyhow!("GraphQL errors: {:?}", errors));
+        if self.verbose {
+            eprintln!("Request completed in {:?}", start_time.elapsed());
+            eprintln!("Response status: {}", response.status());
         }
 
-        let data = response_body
-            .data
-            .ok_or_else(|| anyhow::anyhow!("No data in response"))?;
+        let response_body: Response<get_issue::ResponseData> =
+            response.json().await.map_err(LinearError::from)?;
+
+        if let Some(errors) = response_body.errors {
+            // Check if this is a "not found" error
+            let error_string = format!("{:?}", errors);
+            if error_string.contains("not found") || error_string.contains("not exist") {
+                return Err(LinearError::IssueNotFound(
+                    self.extract_issue_id(&error_string),
+                ));
+            }
+            return Err(LinearError::GraphQL(error_string));
+        }
+
+        let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
 
         let issue = data.issue;
 
@@ -624,7 +719,7 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("GraphQL errors"));
+        assert!(error.to_string().contains("GraphQL error"));
     }
 
     #[tokio::test]
@@ -643,7 +738,7 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("GraphQL errors"));
+        assert!(error.to_string().contains("GraphQL error"));
     }
 
     #[tokio::test]
@@ -653,6 +748,7 @@ mod tests {
             .mock("POST", "/graphql")
             .with_status(408)
             .with_body("Request Timeout")
+            .expect(4)  // 1 initial + 3 retries
             .create();
 
         let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
@@ -762,7 +858,7 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("GraphQL errors"));
+        assert!(error.to_string().contains("GraphQL error"));
     }
 
     #[tokio::test]
@@ -1057,7 +1153,7 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("GraphQL errors"));
+        assert!(error.to_string().contains("GraphQL error"));
     }
 
     #[tokio::test]

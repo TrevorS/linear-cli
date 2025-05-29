@@ -1,15 +1,42 @@
 // ABOUTME: Main entry point for the Linear CLI application
 // ABOUTME: Provides command-line interface for Linear issue tracking
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
-use linear_sdk::{IssueFilters, LinearClient};
+use indicatif::{ProgressBar, ProgressStyle};
+use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
+use owo_colors::OwoColorize;
 use std::env;
 
 mod output;
 mod types;
 
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
+
+fn create_spinner(message: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.blue} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(message.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
+}
+
+fn display_error(error: &LinearError, use_color: bool) {
+    if use_color {
+        eprintln!("{} {}", "Error:".red().bold(), error);
+    } else {
+        eprintln!("Error: {}", error);
+    }
+
+    if let Some(help) = error.help_text() {
+        eprintln!();
+        eprintln!("{}", help);
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "linear")]
@@ -18,6 +45,10 @@ struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
     no_color: bool,
+
+    /// Enable verbose output for debugging
+    #[arg(long, short, global = true)]
+    verbose: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -60,32 +91,45 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Check connection to Linear
+    Status {
+        /// Show detailed connection info
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let api_key = match env::var("LINEAR_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            eprintln!("Error: No LINEAR_API_KEY environment variable found");
-            eprintln!();
-            eprintln!("Please set your Linear API key:");
-            eprintln!("export LINEAR_API_KEY=lin_api_xxxxx");
-            eprintln!();
-            eprintln!("Get your API key from: https://linear.app/settings/api");
-            std::process::exit(1);
-        }
-    };
-
     let cli = Cli::parse();
-    let client = LinearClient::new(api_key)?;
 
     // Determine if color should be used
     let use_color = !cli.no_color
         && env::var("NO_COLOR").is_err()
         && env::var("TERM").unwrap_or_default() != "dumb";
+
+    let api_key = match env::var("LINEAR_API_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            display_error(&LinearError::Auth, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    let spinner = create_spinner("Connecting to Linear...");
+    let client = match LinearClient::new_with_verbose(api_key, cli.verbose) {
+        Ok(client) => {
+            spinner.finish_with_message("Connected to Linear");
+            client
+        }
+        Err(e) => {
+            spinner.finish_and_clear();
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
 
     match cli.command {
         Commands::Issues {
@@ -106,42 +150,110 @@ async fn main() -> Result<()> {
                 None
             };
 
-            let issues = client.list_issues_filtered(limit, filters).await?;
+            let spinner = create_spinner("Fetching issues...");
+            let issues = match client.list_issues_filtered(limit, filters).await {
+                Ok(issues) => {
+                    spinner.finish_and_clear();
+                    issues
+                }
+                Err(e) => {
+                    spinner.finish_and_clear();
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
 
             if issues.is_empty() && !json {
                 println!("No issues found.");
             } else {
                 let output = if json {
                     let formatter = JsonFormatter::new(pretty);
-                    formatter.format_issues(&issues)?
+                    match formatter.format_issues(&issues) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&e, use_color);
+                            std::process::exit(1);
+                        }
+                    }
                 } else {
                     let formatter = TableFormatter::new(use_color);
-                    formatter.format_issues(&issues)?
+                    match formatter.format_issues(&issues) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&e, use_color);
+                            std::process::exit(1);
+                        }
+                    }
                 };
                 println!("{}", output);
             }
         }
-        Commands::Issue { id, json } => match client.get_issue(id).await {
-            Ok(issue) => {
-                let output = if json {
-                    let formatter = JsonFormatter::new(false);
-                    formatter.format_detailed_issue(&issue)?
-                } else {
-                    let formatter = TableFormatter::new(use_color);
-                    formatter.format_detailed_issue(&issue)?
-                };
-                println!("{}", output);
-            }
-            Err(e) => {
-                if e.to_string().contains("Issue not found") {
-                    eprintln!("Error: Issue not found");
-                    eprintln!("Please check the issue identifier format (e.g., ENG-123)");
+        Commands::Issue { id, json } => {
+            let spinner = create_spinner(&format!("Fetching issue {}...", id));
+            match client.get_issue(id).await {
+                Ok(issue) => {
+                    spinner.finish_and_clear();
+                    let output = if json {
+                        let formatter = JsonFormatter::new(false);
+                        match formatter.format_detailed_issue(&issue) {
+                            Ok(output) => output,
+                            Err(e) => {
+                                display_error(&e, use_color);
+                                std::process::exit(1);
+                            }
+                        }
+                    } else {
+                        let formatter = TableFormatter::new(use_color);
+                        match formatter.format_detailed_issue(&issue) {
+                            Ok(output) => output,
+                            Err(e) => {
+                                display_error(&e, use_color);
+                                std::process::exit(1);
+                            }
+                        }
+                    };
+                    println!("{}", output);
+                }
+                Err(e) => {
+                    spinner.finish_and_clear();
+                    display_error(&e, use_color);
                     std::process::exit(1);
-                } else {
-                    return Err(e);
                 }
             }
-        },
+        }
+        Commands::Status { verbose } => {
+            let spinner = create_spinner("Checking Linear connection...");
+            match client.execute_viewer_query().await {
+                Ok(viewer_data) => {
+                    spinner.finish_and_clear();
+                    if use_color {
+                        println!("{} Connected to Linear", "✓".green());
+                    } else {
+                        println!("✓ Connected to Linear");
+                    }
+
+                    if verbose {
+                        println!();
+                        println!(
+                            "User: {} ({})",
+                            viewer_data.viewer.name, viewer_data.viewer.email
+                        );
+                        println!("User ID: {}", viewer_data.viewer.id);
+                    }
+                }
+                Err(e) => {
+                    spinner.finish_and_clear();
+                    if use_color {
+                        println!("{} Failed to connect to Linear", "✗".red());
+                    } else {
+                        println!("✗ Failed to connect to Linear");
+                    }
+                    println!();
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -206,6 +318,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test custom limit
@@ -224,6 +337,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test short form
@@ -242,6 +356,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON flag
@@ -260,6 +375,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON with pretty flag
@@ -278,6 +394,7 @@ mod tests {
                 assert!(pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test pretty flag requires json (should fail)
@@ -342,6 +459,7 @@ mod tests {
                 assert_eq!(team, None);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test status filter
@@ -358,6 +476,7 @@ mod tests {
                 assert_eq!(team, None);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test team filter
@@ -374,6 +493,7 @@ mod tests {
                 assert_eq!(team, Some("ENG".to_string()));
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
 
         // Test combined filters
@@ -400,6 +520,7 @@ mod tests {
                 assert_eq!(team, Some("ENG".to_string()));
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Status { .. } => panic!("Expected Issues command"),
         }
     }
 
