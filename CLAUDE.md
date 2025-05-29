@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Linear CLI is a command-line interface for Linear (issue tracking/project management tool) built in Rust. The project provides fast issue browsing and management directly from the terminal.
+Linear CLI is a command-line interface for Linear (issue tracking/project management tool) built in Rust. The project provides fast issue browsing and management directly from the terminal with beautiful table formatting and color-coded output.
 
 ## Build and Development Commands
 
@@ -15,11 +15,17 @@ cargo build
 # Run tests
 cargo test --workspace
 
+# Run snapshot tests with review
+cargo insta test --review
+
 # Run the CLI
 cargo run -p linear-cli
 
 # Run with specific arguments
 cargo run -p linear-cli -- [args]
+
+# Example: List issues without color
+cargo run -p linear-cli -- --no-color issues
 
 # Build release version
 cargo build --release --workspace
@@ -58,10 +64,11 @@ The project is structured as a Cargo workspace with:
 ### Technology Stack:
 - **Async Runtime**: tokio
 - **HTTP Client**: reqwest
-- **CLI Parsing**: clap
+- **CLI Parsing**: clap (with derive macros)
 - **GraphQL**: graphql_client with code generation
 - **Error Handling**: anyhow
-- **Terminal UI**: tabled, owo-colors
+- **Terminal UI**: tabled (with ansi feature), owo-colors
+- **Snapshot Testing**: insta
 
 ## Linear API Integration
 
@@ -80,9 +87,26 @@ The project uses Linear's GraphQL API. Key considerations:
 ## Testing Strategy
 
 - Unit tests for SDK components
-- Integration tests with mocked API responses
+- Integration tests with mocked API responses (using mockito)
 - End-to-end tests against Linear's API (behind feature flag)
+- Snapshot tests for terminal output formatting (using insta)
 - Test coverage for all major functionality
+
+### Snapshot Testing
+
+When working with output formatting, use snapshot tests:
+```bash
+# Run snapshot tests
+cargo insta test
+
+# Review and accept snapshot changes
+cargo insta review
+
+# Accept all pending snapshots
+cargo insta accept
+```
+
+Note: The pre-commit hook excludes `.snap` files from trailing whitespace checks to preserve exact output formatting.
 
 ## Important Project Documentation
 

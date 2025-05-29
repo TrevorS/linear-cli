@@ -10,9 +10,34 @@ cargo install linear-cli
 
 ## Usage
 
+First, set your Linear API key:
+
 ```bash
-linear-cli --help
+export LINEAR_API_KEY=lin_api_xxxxx
 ```
+
+Then use the CLI:
+
+```bash
+# List issues in a formatted table
+linear issues
+
+# List issues without color
+linear --no-color issues
+
+# List a specific number of issues
+linear issues --limit 10
+
+# Get help
+linear --help
+```
+
+### Features
+
+- **Beautiful table output**: Issues are displayed in a clean, formatted table
+- **Color-coded status**: Todo (gray), In Progress (yellow), Done (green)
+- **Smart truncation**: Long titles are truncated to fit the terminal
+- **Color control**: Use `--no-color` flag or set `NO_COLOR` environment variable
 
 ## Development
 
