@@ -35,10 +35,12 @@ impl TableFormatter {
 
         if self.use_color {
             match status {
-                IssueStatus::Todo | IssueStatus::Backlog => status.to_string().dimmed().to_string(),
-                IssueStatus::InProgress => status.to_string().yellow().to_string(),
-                IssueStatus::Done => status.to_string().green().to_string(),
-                IssueStatus::Canceled => status.to_string().red().to_string(),
+                IssueStatus::Todo | IssueStatus::Backlog => {
+                    format!("{}", status.to_string().dimmed())
+                }
+                IssueStatus::InProgress => format!("{}", status.to_string().yellow()),
+                IssueStatus::Done => format!("{}", status.to_string().green()),
+                IssueStatus::Canceled => format!("{}", status.to_string().red()),
                 IssueStatus::Unknown(_) => status.to_string(),
             }
         } else {
