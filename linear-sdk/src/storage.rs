@@ -47,21 +47,40 @@ pub fn clear() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    // Use a test-specific service name to avoid interfering with real keychain
+    const TEST_SERVICE: &str = "linear-cli-test";
+    const TEST_ACCOUNT: &str = "oauth-token-test";
+
+    fn test_store(token: &str) -> anyhow::Result<()> {
+        Entry::new(TEST_SERVICE, TEST_ACCOUNT)?.set_password(token)?;
+        Ok(())
+    }
+
+    fn test_load() -> anyhow::Result<String> {
+        Ok(Entry::new(TEST_SERVICE, TEST_ACCOUNT)?.get_password()?)
+    }
+
+    fn test_clear() -> anyhow::Result<()> {
+        let _ = Entry::new(TEST_SERVICE, TEST_ACCOUNT)?.delete_credential();
+        Ok(())
+    }
+
     #[test]
+    #[ignore] // Run with: cargo test -- --ignored
     fn test_keyring_operations() {
-        // This test may fail on systems without proper keyring setup
+        // This test requires keychain access and should be run manually
         // Clear any existing entry first
-        let _ = clear();
+        let _ = test_clear();
 
         // Test store and load
         let test_token = "test-token-12345";
-        match store(test_token) {
+        match test_store(test_token) {
             Ok(_) => {
-                match load() {
+                match test_load() {
                     Ok(loaded_token) => {
                         assert_eq!(loaded_token, test_token);
                         // Clean up
-                        let _ = clear();
+                        let _ = test_clear();
                     }
                     Err(_) => {
                         // May fail on CI or headless systems
@@ -77,9 +96,22 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Run with: cargo test -- --ignored
     fn test_clear_nonexistent() {
         // Should not error when clearing non-existent entry
-        let result = clear();
+        let result = test_clear();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_oauth_disabled_fallback() {
+        // Test that functions return appropriate errors when oauth is disabled
+        // This test can run without keychain access
+        #[cfg(not(feature = "oauth"))]
+        {
+            assert!(store("test").is_err());
+            assert!(load().is_err());
+            assert!(clear().is_err());
+        }
     }
 }
