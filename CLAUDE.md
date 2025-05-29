@@ -62,6 +62,13 @@ The project uses Linear's GraphQL API. Key considerations:
 - GraphQL schema-driven development
 - Type-safe query generation using graphql_client
 
+### API Validation Findings (from linear-api-spike/)
+- **Authentication**: Use `Authorization: <API_KEY>` header (no Bearer prefix)
+- **Schema**: Introspection is available - see `linear-api-spike/schema.json`
+- **Rate Limits**: Headers not observed in testing
+- **Error Format**: Standard GraphQL errors array with extensions
+- **API URL**: `https://api.linear.app/graphql`
+
 ## Testing Strategy
 
 - Unit tests for SDK components
