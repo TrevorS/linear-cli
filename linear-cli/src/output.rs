@@ -426,31 +426,16 @@ impl TableFormatter {
         Ok(String::from_utf8(output)?)
     }
 
-    fn get_syntax_for_language(language: &str) -> &syntect::parsing::SyntaxReference {
-        let syntax_set = get_syntax_set();
+    fn get_syntax_for_language<'a>(
+        lang_hint: &str,
+        code: &str,
+    ) -> &'a syntect::parsing::SyntaxReference {
+        let ss = get_syntax_set();
 
-        syntax_set
-            .find_syntax_by_token(language)
-            .or_else(|| syntax_set.find_syntax_by_extension(language))
-            .or_else(|| {
-                // Try common aliases
-                match language.to_lowercase().as_str() {
-                    "js" => syntax_set.find_syntax_by_token("javascript"),
-                    "ts" | "typescript" => syntax_set.find_syntax_by_token("javascript"), // Use JavaScript for TypeScript
-                    "jsx" | "tsx" => syntax_set.find_syntax_by_token("javascript"), // React/TypeScript JSX
-                    "py" | "python3" => syntax_set.find_syntax_by_token("python"),
-                    "rb" => syntax_set.find_syntax_by_token("ruby"),
-                    "sh" | "bash" | "zsh" => syntax_set.find_syntax_by_token("bash"),
-                    "yml" | "yaml" => syntax_set.find_syntax_by_token("yaml"),
-                    "cpp" | "cxx" | "cc" => syntax_set.find_syntax_by_token("c++"),
-                    "cs" | "csharp" => syntax_set.find_syntax_by_token("c#"),
-                    "rs" => syntax_set.find_syntax_by_token("rust"),
-                    "go" | "golang" => syntax_set.find_syntax_by_token("go"),
-                    "md" | "markdown" => syntax_set.find_syntax_by_token("markdown"),
-                    _ => None,
-                }
-            })
-            .unwrap_or_else(|| syntax_set.find_syntax_plain_text())
+        ss.find_syntax_by_token(lang_hint)
+            .or_else(|| ss.find_syntax_by_extension(lang_hint))
+            .or_else(|| ss.find_syntax_by_first_line(code.lines().next().unwrap_or_default()))
+            .unwrap_or_else(|| ss.find_syntax_plain_text())
     }
 
     fn highlight_code(&self, code: &str, language: &str) -> anyhow::Result<String> {
@@ -462,7 +447,7 @@ impl TableFormatter {
         let syntax_set = get_syntax_set();
         let theme_set = get_theme_set();
 
-        let syntax = Self::get_syntax_for_language(language);
+        let syntax = Self::get_syntax_for_language(language, code);
 
         // Try different themes that might provide better contrast
         let theme = theme_set
@@ -1745,5 +1730,120 @@ interface User {
         // Should contain properly formatted headers
         assert!(result.contains("TypeScript Example"));
         assert!(result.contains("Here's a TypeScript function:"));
+    }
+
+    // Tests for syntect's built-in language detection
+
+    #[test]
+    fn test_explicit_token_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test that explicit tokens are detected correctly
+        let test_cases = vec![
+            ("js", "const x = 42;"),
+            ("ts", "const x: number = 42;"),
+            ("rs", "fn main() {}"),
+            ("python", "def hello(): pass"),
+            ("bash", "echo 'hello'"),
+        ];
+
+        for (token, code) in test_cases {
+            let result = formatter.highlight_code(code, token).unwrap();
+
+            // Should contain ANSI color codes (indicating highlighting worked)
+            assert!(
+                result.contains("\x1b["),
+                "Token '{}' should produce syntax highlighting",
+                token
+            );
+
+            // Should contain the original code
+            assert!(
+                result.contains(code.split_whitespace().next().unwrap()),
+                "Token '{}' should preserve code content",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_shebang_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test shebang detection
+        let bash_script = "#!/bin/bash\necho 'Hello World'";
+        let result = formatter.highlight_code(bash_script, "").unwrap(); // No language hint
+
+        // Should detect bash from shebang and highlight accordingly
+        assert!(
+            result.contains("\x1b["),
+            "Shebang should trigger bash highlighting"
+        );
+        assert!(result.contains("echo"), "Should preserve script content");
+
+        // Test Python shebang
+        let python_script = "#!/usr/bin/env python3\nprint('Hello')";
+        let result = formatter.highlight_code(python_script, "").unwrap();
+
+        // Should detect python from shebang and highlight accordingly
+        assert!(
+            result.contains("\x1b["),
+            "Python shebang should trigger highlighting"
+        );
+        assert!(result.contains("print"), "Should preserve Python content");
+    }
+
+    #[test]
+    fn test_plain_text_fallback() {
+        let formatter = TableFormatter::new(true);
+
+        // Test unknown language with no shebang falls back to plain text
+        let unknown_code = "some random text\nwith no special syntax";
+        let result = formatter
+            .highlight_code(unknown_code, "unknown-language")
+            .unwrap();
+
+        // Plain text highlighting might still add minimal ANSI codes,
+        // but should preserve the content
+        assert!(
+            result.contains("some random text"),
+            "Should preserve plain text content"
+        );
+        assert!(
+            result.contains("with no special syntax"),
+            "Should preserve all content"
+        );
+
+        // Test empty language hint with no shebang
+        let plain_text = "just some plain text";
+        let result = formatter.highlight_code(plain_text, "").unwrap();
+
+        assert!(
+            result.contains("just some plain text"),
+            "Should preserve content for empty language hint"
+        );
+    }
+
+    #[test]
+    fn test_extension_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test that file extensions are still detected correctly
+        let test_cases = vec![
+            ("py", "print('hello')"), // Should detect as Python
+            ("rs", "fn main() {}"),   // Should detect as Rust
+            ("js", "console.log();"), // Should detect as JavaScript
+        ];
+
+        for (ext, code) in test_cases {
+            let result = formatter.highlight_code(code, ext).unwrap();
+
+            // Should contain ANSI color codes (indicating highlighting worked)
+            assert!(
+                result.contains("\x1b["),
+                "Extension '{}' should produce syntax highlighting",
+                ext
+            );
+        }
     }
 }
