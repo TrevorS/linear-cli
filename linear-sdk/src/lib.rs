@@ -137,16 +137,6 @@ pub struct IssueFilters {
 }
 
 impl LinearClient {
-    fn extract_issue_id(&self, error_string: &str) -> String {
-        // Try to extract issue ID from error message
-        if let Some(start) = error_string.find("Issue ") {
-            if let Some(end) = error_string[start + 6..].find(" ") {
-                return error_string[start + 6..start + 6 + end].to_string();
-            }
-        }
-        "unknown".to_string()
-    }
-
     async fn build_issue_filter(
         &self,
         filters: &IssueFilters,
@@ -643,7 +633,7 @@ impl LinearClient {
             let error_string = format!("{:?}", errors);
             if error_string.contains("not found") || error_string.contains("not exist") {
                 return Err(LinearError::IssueNotFound {
-                    identifier: self.extract_issue_id(&error_string),
+                    identifier: id,
                     suggestion: None,
                 });
             }
