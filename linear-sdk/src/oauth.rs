@@ -3,6 +3,8 @@
 
 #[cfg(feature = "oauth")]
 use crate::{Result, storage};
+#[cfg(feature = "oauth")]
+use std::borrow::Cow;
 
 #[cfg(feature = "oauth")]
 use oauth2::{
@@ -20,6 +22,14 @@ use url::Url;
 const REDIRECT_PORT: u16 = 8089;
 #[cfg(feature = "oauth")]
 const REDIRECT_PATH: &str = "/callback";
+
+#[cfg(feature = "oauth")]
+fn auth_error(reason: &'static str) -> crate::LinearError {
+    crate::LinearError::Auth {
+        reason: Cow::Borrowed(reason),
+        source: None,
+    }
+}
 
 // Type alias for the OAuth client with all its type state parameters
 #[cfg(feature = "oauth")]
@@ -68,7 +78,7 @@ impl OAuthManager {
         let http_client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(|_| crate::LinearError::Auth)?;
+            .map_err(|_| auth_error("HTTP client build failed"))?;
 
         Ok(Self {
             client,
@@ -99,7 +109,7 @@ impl OAuthManager {
             .url();
 
         // Step 2: open browser
-        open::that(auth_url.as_str()).map_err(|_| crate::LinearError::Auth)?;
+        open::that(auth_url.as_str()).map_err(|_| auth_error("Failed to open browser"))?;
 
         println!("Opening browser for authentication...");
         println!(
@@ -108,8 +118,8 @@ impl OAuthManager {
         );
 
         // Step 3: listen for callback
-        let server =
-            Server::http(("127.0.0.1", REDIRECT_PORT)).map_err(|_| crate::LinearError::Auth)?;
+        let server = Server::http(("127.0.0.1", REDIRECT_PORT))
+            .map_err(|_| auth_error("Failed to start callback server"))?;
 
         for request in server.incoming_requests() {
             let request_url = request.url();
@@ -123,23 +133,23 @@ impl OAuthManager {
             if request_url.starts_with(REDIRECT_PATH) {
                 // Parse query ?code=…&state=…
                 let url = format!("http://localhost:{}{}", REDIRECT_PORT, request_url);
-                let params: Url = url.parse().map_err(|_| crate::LinearError::Auth)?;
+                let params: Url = url.parse().map_err(|_| auth_error("Invalid URL format"))?;
 
                 let code = params
                     .query_pairs()
                     .find(|p| p.0 == "code")
                     .map(|p| p.1.to_string())
-                    .ok_or(crate::LinearError::Auth)?;
+                    .ok_or(auth_error("Missing OAuth parameter"))?;
 
                 let state = params
                     .query_pairs()
                     .find(|p| p.0 == "state")
                     .map(|p| p.1.to_string())
-                    .ok_or(crate::LinearError::Auth)?;
+                    .ok_or(auth_error("Missing OAuth parameter"))?;
 
                 // CSRF check
                 if state != *csrf_token.secret() {
-                    return Err(crate::LinearError::Auth);
+                    return Err(auth_error("OAuth authentication failed"));
                 }
 
                 // Respond immediately so the browser tab can close
@@ -147,12 +157,12 @@ impl OAuthManager {
                     Response::from_string("Authentication successful! You can close this window.")
                         .with_header(
                             Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..])
-                                .map_err(|_| crate::LinearError::Auth)?,
+                                .map_err(|_| auth_error("Failed to create HTTP headers"))?,
                         );
 
                 request
                     .respond(response)
-                    .map_err(|_| crate::LinearError::Auth)?;
+                    .map_err(|_| auth_error("Failed to send HTTP response"))?;
 
                 // Step 4: trade code+verifier for access token
                 let token = self
@@ -160,11 +170,11 @@ impl OAuthManager {
                     .exchange_code(AuthorizationCode::new(code))
                     .set_pkce_verifier(pkce_verifier)
                     .request(&self.http_client)
-                    .map_err(|_| crate::LinearError::Auth)?;
+                    .map_err(|_| auth_error("Token exchange failed"))?;
 
                 // Step 5: persist
                 storage::store(token.access_token().secret())
-                    .map_err(|_| crate::LinearError::Auth)?;
+                    .map_err(|_| auth_error("Failed to store token"))?;
                 println!("✓ Logged in successfully!");
                 break;
             }
@@ -173,12 +183,12 @@ impl OAuthManager {
     }
 
     pub fn logout(&self) -> Result<()> {
-        storage::clear().map_err(|_| crate::LinearError::Auth)?;
+        storage::clear().map_err(|_| auth_error("Failed to clear stored credentials"))?;
         Ok(())
     }
 
     pub fn get_token(&self) -> Result<String> {
-        storage::load().map_err(|_| crate::LinearError::Auth)
+        storage::load().map_err(|_| auth_error("Failed to load stored credentials"))
     }
 }
 

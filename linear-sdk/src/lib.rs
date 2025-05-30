@@ -3,6 +3,7 @@
 
 use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use std::borrow::Cow;
 
 pub mod error;
 pub mod retry;
@@ -425,7 +426,10 @@ impl LinearClient {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&auth_token).map_err(|_| LinearError::Auth)?,
+            HeaderValue::from_str(&auth_token).map_err(|_| LinearError::Auth {
+                reason: Cow::Borrowed("Invalid API key format"),
+                source: None,
+            })?,
         );
         headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
 
@@ -489,11 +493,21 @@ impl LinearClient {
                     eprintln!("Response status: {}", response.status());
                 }
 
+                // Check for HTTP error status codes
+                if !response.status().is_success() {
+                    return Err(LinearError::from_status(
+                        http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
+                    ));
+                }
+
                 let response_body: Response<viewer::ResponseData> =
                     response.json().await.map_err(LinearError::from)?;
 
                 if let Some(errors) = response_body.errors {
-                    return Err(LinearError::GraphQL(format!("{:?}", errors)));
+                    return Err(LinearError::GraphQL {
+                        message: format!("{:?}", errors),
+                        errors: vec![],
+                    });
                 }
 
                 response_body.data.ok_or(LinearError::InvalidResponse)
@@ -552,11 +566,21 @@ impl LinearClient {
             eprintln!("Response status: {}", response.status());
         }
 
+        // Check for HTTP error status codes
+        if !response.status().is_success() {
+            return Err(LinearError::from_status(
+                http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
+            ));
+        }
+
         let response_body: Response<list_issues::ResponseData> =
             response.json().await.map_err(LinearError::from)?;
 
         if let Some(errors) = response_body.errors {
-            return Err(LinearError::GraphQL(format!("{:?}", errors)));
+            return Err(LinearError::GraphQL {
+                message: format!("{:?}", errors),
+                errors: vec![],
+            });
         }
 
         let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
@@ -604,6 +628,13 @@ impl LinearClient {
             eprintln!("Response status: {}", response.status());
         }
 
+        // Check for HTTP error status codes
+        if !response.status().is_success() {
+            return Err(LinearError::from_status(
+                http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
+            ));
+        }
+
         let response_body: Response<get_issue::ResponseData> =
             response.json().await.map_err(LinearError::from)?;
 
@@ -611,11 +642,15 @@ impl LinearClient {
             // Check if this is a "not found" error
             let error_string = format!("{:?}", errors);
             if error_string.contains("not found") || error_string.contains("not exist") {
-                return Err(LinearError::IssueNotFound(
-                    self.extract_issue_id(&error_string),
-                ));
+                return Err(LinearError::IssueNotFound {
+                    identifier: self.extract_issue_id(&error_string),
+                    suggestion: None,
+                });
             }
-            return Err(LinearError::GraphQL(error_string));
+            return Err(LinearError::GraphQL {
+                message: error_string,
+                errors: vec![],
+            });
         }
 
         let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
@@ -739,7 +774,7 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("GraphQL error"));
+        assert!(error.to_string().contains("Authentication failed"));
     }
 
     #[tokio::test]
