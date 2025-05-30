@@ -155,6 +155,52 @@ impl TableFormatter {
         }
     }
 
+    fn supports_osc8() -> bool {
+        // Check for specific terminal programs that support OSC-8
+        if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+            match term_program.as_str() {
+                "iTerm.app" | "kitty" | "ghostty" | "WezTerm" => return true,
+                _ => {}
+            }
+        }
+
+        // Check for Windows Terminal
+        if std::env::var("WT_SESSION").is_ok() {
+            return true;
+        }
+
+        // Check for VTE-based terminals (GNOME Terminal, etc.)
+        if std::env::var("VTE_VERSION").is_ok() {
+            return true;
+        }
+
+        // Check for Alacritty
+        if let Ok(term) = std::env::var("TERM") {
+            if term.contains("alacritty") {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn format_hyperlink(&self, url: &str, text: &str, supports_osc8: bool) -> String {
+        if supports_osc8 && self.use_color {
+            // OSC-8 hyperlink format: ESC]8;;URL\TEXT\ESC]8;;\
+            format!(
+                "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
+                url,
+                text.cyan().underline()
+            )
+        } else if self.use_color {
+            // Fallback to colored text without hyperlink
+            format!("{}", text.cyan().underline())
+        } else {
+            // Plain text fallback
+            text.to_string()
+        }
+    }
+
     fn render_markdown_to_terminal(&self, markdown: &str) -> anyhow::Result<String> {
         let mut output = Vec::new();
         let parser = Parser::new(markdown);
@@ -167,6 +213,8 @@ impl TableFormatter {
         let mut current_link_url = String::new();
         let mut in_strong = false;
         let mut in_emphasis = false;
+
+        let supports_osc8 = Self::supports_osc8();
 
         for event in parser {
             match event {
@@ -307,7 +355,11 @@ impl TableFormatter {
                                 current_text.white(),
                                 "   ".dimmed(),
                                 "🔗 ".dimmed(),
-                                current_link_url.underline().blue()
+                                self.format_hyperlink(
+                                    &current_link_url,
+                                    &current_link_url,
+                                    supports_osc8
+                                )
                             )?;
                         } else {
                             write!(
@@ -317,12 +369,12 @@ impl TableFormatter {
                             )?;
                         }
                     } else {
-                        // Regular link - just show the link text with URL styling
-                        if self.use_color {
-                            write!(output, "{}", current_text.underline().cyan())?;
-                        } else {
-                            write!(output, "{}", current_text)?;
-                        }
+                        // Regular link - show the link text as a clickable hyperlink
+                        write!(
+                            output,
+                            "{}",
+                            self.format_hyperlink(&current_link_url, &current_text, supports_osc8)
+                        )?;
                     }
                     current_text.clear();
                     current_link_url.clear();
@@ -481,12 +533,13 @@ impl OutputFormat for TableFormatter {
         }
 
         output.push(String::new());
+        let supports_osc8 = Self::supports_osc8();
         if self.use_color {
             output.push(format!(
                 "{}{}\n   {}",
                 "🔗 ".white(),
                 "View in Linear:".cyan(),
-                issue.url.underline().blue()
+                self.format_hyperlink(&issue.url, &issue.url, supports_osc8)
             ));
         } else {
             output.push(format!("🔗 View in Linear:\n   {}", issue.url));
@@ -585,12 +638,13 @@ impl OutputFormat for TableFormatter {
         }
 
         output.push(String::new());
+        let supports_osc8 = Self::supports_osc8();
         if self.use_color {
             output.push(format!(
                 "{}{}\n   {}",
                 "🔗 ".white(),
                 "View in Linear:".cyan(),
-                issue.url.underline().blue()
+                self.format_hyperlink(&issue.url, &issue.url, supports_osc8)
             ));
         } else {
             output.push(format!("🔗 View in Linear:\n   {}", issue.url));
@@ -1083,6 +1137,248 @@ Final paragraph with normal text."#
         assert!(result.contains("**markdown content**"));
         assert!(result.contains("```rust"));
         assert!(result.contains("[Linear](https://linear.app)"));
+    }
+
+    #[test]
+    fn test_osc8_terminal_detection() {
+        // Test various terminal environments
+
+        // Save original env vars
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+        let original_wt_session = std::env::var("WT_SESSION").ok();
+        let original_vte_version = std::env::var("VTE_VERSION").ok();
+        let original_term = std::env::var("TERM").ok();
+
+        unsafe {
+            // Test iTerm2
+            std::env::set_var("TERM_PROGRAM", "iTerm.app");
+            assert!(TableFormatter::supports_osc8());
+
+            // Test kitty
+            std::env::set_var("TERM_PROGRAM", "kitty");
+            assert!(TableFormatter::supports_osc8());
+
+            // Test Ghostty
+            std::env::set_var("TERM_PROGRAM", "ghostty");
+            assert!(TableFormatter::supports_osc8());
+
+            // Test WezTerm
+            std::env::set_var("TERM_PROGRAM", "WezTerm");
+            assert!(TableFormatter::supports_osc8());
+
+            // Test unknown terminal
+            std::env::set_var("TERM_PROGRAM", "unknown");
+            assert!(!TableFormatter::supports_osc8());
+            std::env::remove_var("TERM_PROGRAM");
+
+            // Test Windows Terminal
+            std::env::set_var("WT_SESSION", "some-session-id");
+            assert!(TableFormatter::supports_osc8());
+            std::env::remove_var("WT_SESSION");
+
+            // Test VTE-based terminal
+            std::env::set_var("VTE_VERSION", "6200");
+            assert!(TableFormatter::supports_osc8());
+            std::env::remove_var("VTE_VERSION");
+
+            // Test Alacritty
+            std::env::set_var("TERM", "alacritty");
+            assert!(TableFormatter::supports_osc8());
+
+            // Test terminal without alacritty in name
+            std::env::set_var("TERM", "xterm-256color");
+            assert!(!TableFormatter::supports_osc8());
+
+            // Restore original env vars
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+            if let Some(val) = original_wt_session {
+                std::env::set_var("WT_SESSION", val);
+            } else {
+                std::env::remove_var("WT_SESSION");
+            }
+            if let Some(val) = original_vte_version {
+                std::env::set_var("VTE_VERSION", val);
+            } else {
+                std::env::remove_var("VTE_VERSION");
+            }
+            if let Some(val) = original_term {
+                std::env::set_var("TERM", val);
+            } else {
+                std::env::remove_var("TERM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_format_hyperlink() {
+        let formatter = TableFormatter::new(true);
+        let url = "https://linear.app/test/issue/ENG-123";
+        let text = "ENG-123";
+
+        // Test with OSC-8 support
+        let result = formatter.format_hyperlink(url, text, true);
+        assert!(result.contains("\x1b]8;;"));
+        assert!(result.contains(url));
+        assert!(result.contains(text));
+        assert!(result.contains("\x1b\\"));
+
+        // Test without OSC-8 support (colored)
+        let result = formatter.format_hyperlink(url, text, false);
+        assert!(!result.contains("\x1b]8;;"));
+        assert!(result.contains(text));
+
+        // Test without color
+        let formatter_no_color = TableFormatter::new(false);
+        let result = formatter_no_color.format_hyperlink(url, text, true);
+        assert_eq!(result, text);
+
+        let result = formatter_no_color.format_hyperlink(url, text, false);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_markdown_links_with_osc8() {
+        let formatter = TableFormatter::new(true);
+
+        // Save original env
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+
+        unsafe {
+            // Set terminal to support OSC-8
+            std::env::set_var("TERM_PROGRAM", "ghostty");
+
+            let markdown = "Check out [Linear](https://linear.app) for more details.";
+            let result = formatter.render_markdown_to_terminal(markdown).unwrap();
+
+            // Should contain OSC-8 sequence
+            assert!(result.contains("\x1b]8;;https://linear.app\x1b\\"));
+            assert!(result.contains("Linear"));
+
+            // Test media link - images are processed as text, not links in markdown
+            let markdown_media =
+                "Check out this [media](https://uploads.linear.app/test.png) file.";
+            let result = formatter
+                .render_markdown_to_terminal(markdown_media)
+                .unwrap();
+            // Media links should show with the media icon and clickable URL
+            assert!(result.contains("\x1b]8;;https://uploads.linear.app/test.png\x1b\\"));
+            assert!(result.contains("📎"));
+            assert!(result.contains("Media:"));
+
+            // Restore env
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_view_in_linear_with_osc8() {
+        let formatter = TableFormatter::new(true);
+        let issue = create_test_detailed_issue();
+
+        // Save original env
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+
+        unsafe {
+            // Set terminal to support OSC-8
+            std::env::set_var("TERM_PROGRAM", "iTerm.app");
+
+            let result = formatter.format_detailed_issue(&issue).unwrap();
+
+            // Should contain OSC-8 sequence for the Linear URL
+            assert!(result.contains("\x1b]8;;https://linear.app/test/issue/ENG-123\x1b\\"));
+            assert!(result.contains("View in Linear:"));
+
+            // Restore env
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_osc8_disabled_when_no_color() {
+        let formatter = TableFormatter::new(false); // No color = no OSC-8
+        let issue = create_test_detailed_issue();
+
+        // Save original env
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+
+        unsafe {
+            // Set terminal to support OSC-8
+            std::env::set_var("TERM_PROGRAM", "ghostty");
+
+            let result = formatter.format_detailed_issue(&issue).unwrap();
+
+            // Should NOT contain OSC-8 sequences when color is disabled
+            assert!(!result.contains("\x1b]8;;"));
+            assert!(result.contains("https://linear.app/test/issue/ENG-123"));
+
+            // Restore env
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_osc8_disabled_in_unsupported_terminal() {
+        let formatter = TableFormatter::new(true);
+        let issue = create_test_detailed_issue();
+
+        // Save original env
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+        let original_term = std::env::var("TERM").ok();
+        let original_wt_session = std::env::var("WT_SESSION").ok();
+        let original_vte_version = std::env::var("VTE_VERSION").ok();
+
+        unsafe {
+            // Set terminal to not support OSC-8
+            std::env::remove_var("TERM_PROGRAM");
+            std::env::remove_var("WT_SESSION");
+            std::env::remove_var("VTE_VERSION");
+            std::env::set_var("TERM", "xterm");
+
+            let result = formatter.format_detailed_issue(&issue).unwrap();
+
+            // Should NOT contain OSC-8 sequences in unsupported terminal
+            assert!(!result.contains("\x1b]8;;"));
+            // But should still have colored/underlined URLs
+            assert!(result.contains("https://linear.app/test/issue/ENG-123"));
+
+            // Restore env
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+            if let Some(val) = original_wt_session {
+                std::env::set_var("WT_SESSION", val);
+            } else {
+                std::env::remove_var("WT_SESSION");
+            }
+            if let Some(val) = original_vte_version {
+                std::env::set_var("VTE_VERSION", val);
+            } else {
+                std::env::remove_var("VTE_VERSION");
+            }
+            if let Some(val) = original_term {
+                std::env::set_var("TERM", val);
+            } else {
+                std::env::remove_var("TERM");
+            }
+        }
     }
 
     #[test]
