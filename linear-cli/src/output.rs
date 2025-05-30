@@ -436,15 +436,41 @@ impl TableFormatter {
                 // Try common aliases
                 match language.to_lowercase().as_str() {
                     "js" => syntax_set.find_syntax_by_token("javascript"),
-                    "ts" => syntax_set.find_syntax_by_token("typescript"),
-                    "py" => syntax_set.find_syntax_by_token("python"),
+                    "ts" | "typescript" => syntax_set.find_syntax_by_token("javascript"), // Use JavaScript for TypeScript
+                    "jsx" | "tsx" => syntax_set.find_syntax_by_token("javascript"), // React/TypeScript JSX
+                    "py" | "python3" => syntax_set.find_syntax_by_token("python"),
                     "rb" => syntax_set.find_syntax_by_token("ruby"),
-                    "sh" | "bash" => syntax_set.find_syntax_by_token("bash"),
-                    "yml" => syntax_set.find_syntax_by_token("yaml"),
+                    "sh" | "bash" | "zsh" => syntax_set.find_syntax_by_token("bash"),
+                    "yml" | "yaml" => syntax_set.find_syntax_by_token("yaml"),
+                    "cpp" | "cxx" | "cc" => syntax_set.find_syntax_by_token("c++"),
+                    "cs" | "csharp" => syntax_set.find_syntax_by_token("c#"),
+                    "rs" => syntax_set.find_syntax_by_token("rust"),
+                    "go" | "golang" => syntax_set.find_syntax_by_token("go"),
+                    "md" | "markdown" => syntax_set.find_syntax_by_token("markdown"),
                     _ => None,
                 }
             })
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text())
+    }
+
+    fn auto_detect_language(code: &str) -> &str {
+        let first_line = code.lines().next().unwrap_or("").trim();
+
+        // Auto-detect based on common patterns
+        if first_line.contains("const ") || first_line.contains("let ") || first_line.contains("var ")
+            || first_line.contains("=>") || first_line.contains("function") {
+            "javascript"
+        } else if first_line.contains("fn ") || first_line.contains("let mut ") || first_line.contains("impl ") {
+            "rust"
+        } else if first_line.contains("def ") || first_line.contains("import ") || first_line.contains("from ") {
+            "python"
+        } else if first_line.contains("func ") || first_line.contains("package ") {
+            "go"
+        } else if first_line.contains("#!/bin/bash") || first_line.contains("#!/bin/sh") {
+            "bash"
+        } else {
+            ""
+        }
     }
 
     fn highlight_code(&self, code: &str, language: &str) -> anyhow::Result<String> {
@@ -456,15 +482,28 @@ impl TableFormatter {
         let syntax_set = get_syntax_set();
         let theme_set = get_theme_set();
 
-        let syntax = Self::get_syntax_for_language(language);
-        let theme = &theme_set.themes["base16-ocean.dark"];
+        // Auto-detect language if not specified
+        let effective_language = if language.is_empty() {
+            Self::auto_detect_language(code)
+        } else {
+            language
+        };
+
+        let syntax = Self::get_syntax_for_language(effective_language);
+
+        // Try different themes that might provide better contrast
+        let theme = theme_set.themes.get("Solarized (dark)")
+            .or_else(|| theme_set.themes.get("Monokai"))
+            .or_else(|| theme_set.themes.get("base16-eighties.dark"))
+            .or_else(|| theme_set.themes.get("base16-ocean.dark"))
+            .unwrap_or_else(|| theme_set.themes.values().next().unwrap());
 
         let mut highlighter = HighlightLines::new(syntax, theme);
         let mut output = String::new();
 
         for line in code.lines() {
             let ranges = highlighter.highlight_line(line, syntax_set)?;
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], true);
+            let escaped = as_24_bit_terminal_escaped(&ranges[..], false); // No background color
             output.push_str(&escaped);
             output.push('\n');
         }
@@ -1632,5 +1671,91 @@ console.log("Hello, World!");
         assert!(result.contains("log"));
         // Should contain ANSI color codes for highlighting
         assert!(result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_typescript_syntax_highlighting_debug() {
+        let formatter = TableFormatter::new(true);
+        let ts_code = "const f = (x: number): number => x + 1;";
+
+        let result = formatter.highlight_code(ts_code, "typescript").unwrap();
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+        // Should contain the actual code
+        assert!(result.contains("const"));
+        assert!(result.contains("number"));
+        assert!(result.contains("=>"));
+
+        // Result should be longer than original due to ANSI codes
+        assert!(result.len() > ts_code.len());
+    }
+
+    #[test]
+    fn test_various_language_syntax_highlighting() {
+        let formatter = TableFormatter::new(true);
+
+        // Test various language aliases
+        let test_cases = vec![
+            ("typescript", "const x: number = 42;"),
+            ("ts", "interface User { name: string; }"),
+            ("jsx", "const el = <div>Hello</div>;"),
+            ("tsx", "const Component: React.FC = () => <div>TypeScript JSX</div>;"),
+            ("python3", "def hello() -> None: print('Hello')"),
+            ("rs", "fn main() { println!(\"Hello\"); }"),
+            ("go", "func main() { fmt.Println(\"Hello\") }"),
+            ("cpp", "int main() { std::cout << \"Hello\"; }"),
+            ("csharp", "public static void Main() { Console.WriteLine(\"Hello\"); }"),
+        ];
+
+        for (lang, code) in test_cases {
+            let result = formatter.highlight_code(code, lang).unwrap();
+
+            // All should have syntax highlighting (ANSI codes)
+            assert!(result.contains("\x1b["), "Language '{}' should have syntax highlighting", lang);
+
+            // Should contain the original code content
+            assert!(result.contains(code.split_whitespace().next().unwrap()),
+                   "Language '{}' should preserve code content", lang);
+        }
+    }
+
+    #[test]
+    fn test_markdown_with_typescript_code_block() {
+        let formatter = TableFormatter::new(true);
+        let markdown = r#"## TypeScript Example
+
+Here's a TypeScript function:
+
+```typescript
+const f = (x: number): number => x + 1;
+```
+
+And here's the same with `ts` alias:
+
+```ts
+interface User {
+    name: string;
+    age: number;
+}
+```"#;
+
+        let result = formatter.render_markdown_to_terminal(markdown).unwrap();
+
+        // Should not contain raw markdown code block markers
+        assert!(!result.contains("```typescript"));
+        assert!(!result.contains("```ts"));
+
+        // Should contain the actual code
+        assert!(result.contains("const"));
+        assert!(result.contains("interface"));
+        assert!(result.contains("number"));
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+
+        // Should contain properly formatted headers
+        assert!(result.contains("TypeScript Example"));
+        assert!(result.contains("Here's a TypeScript function:"));
     }
 }
