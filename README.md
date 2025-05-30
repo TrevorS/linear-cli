@@ -1,6 +1,6 @@
 # linear-cli
 
-A command-line interface for Linear.
+A fast, feature-rich command-line interface for Linear with beautiful terminal output.
 
 ## Installation
 
@@ -10,8 +10,37 @@ cargo install linear-cli
 
 ## Usage
 
-First, set your Linear API key:
+### Authentication
 
+You can authenticate using either OAuth (recommended) or API key:
+
+#### OAuth Authentication (Recommended)
+
+To use OAuth authentication, you'll need to create a Linear OAuth application:
+
+1. Go to https://linear.app/settings/api/applications/new
+2. Set the callback URL to: `http://localhost:8089/callback`
+3. Save your client ID
+4. Configure the CLI with your client ID:
+
+```bash
+# Login with OAuth
+linear login
+
+# Login with a custom OAuth client ID
+linear login --client-id your-client-id
+
+# Or set it as an environment variable
+export LINEAR_OAUTH_CLIENT_ID=your-client-id
+linear login
+
+# Logout
+linear logout
+```
+
+Credentials are securely stored in your system's keychain.
+
+#### API Key Authentication
 ```bash
 export LINEAR_API_KEY=lin_api_xxxxx
 ```
@@ -22,7 +51,7 @@ echo 'LINEAR_API_KEY=your_api_key_here' > .env
 source scripts/setup-env.sh  # Load the environment
 ```
 
-Then use the CLI:
+### Commands
 
 ```bash
 # List issues in a formatted table
@@ -34,16 +63,49 @@ linear --no-color issues
 # List a specific number of issues
 linear issues --limit 10
 
+# Output as JSON
+linear issues --format json
+
+# Pretty-print JSON output
+linear issues --format json --pretty
+
+# View detailed information about a specific issue
+linear issue ENG-123
+
+# Get current user information
+linear me
+
 # Get help
 linear --help
 ```
 
 ### Features
 
-- **Beautiful table output**: Issues are displayed in a clean, formatted table
-- **Color-coded status**: Todo (gray), In Progress (yellow), Done (green)
-- **Smart truncation**: Long titles are truncated to fit the terminal
-- **Color control**: Use `--no-color` flag or set `NO_COLOR` environment variable
+- **🔐 OAuth Authentication**: Secure OAuth flow with system keychain integration
+- **📊 Beautiful Table Output**: Issues displayed in clean, formatted tables with smart column sizing
+- **🎨 Rich Terminal Formatting**:
+  - Color-coded status indicators: Todo (gray), In Progress (yellow), Done (green)
+  - Colored labels with matching backgrounds
+  - Priority indicators with visual cues
+  - Smart truncation for long titles
+- **📝 Markdown Rendering**: Full markdown support in issue descriptions with:
+  - Syntax highlighting for code blocks
+  - Formatted lists, blockquotes, and emphasis
+  - Proper heading hierarchy
+  - Media attachments with visual indicators
+- **🔗 Clickable Links**: OSC-8 hyperlink support for compatible terminals (iTerm2, Ghostty, WezTerm, etc.)
+- **📋 Multiple Output Formats**: Table (default) or JSON with optional pretty-printing
+- **🎯 Detailed Issue Views**: Complete issue information including:
+  - Description with full markdown rendering
+  - Assignee, team, and project details
+  - Labels with color indicators
+  - Priority levels
+  - Timestamps
+  - Direct Linear links
+- **⚡ Fast and Efficient**: Built with Rust for optimal performance
+- **🛡️ Robust Error Handling**: Automatic retries with exponential backoff
+- **🎮 Color Control**: Respects `--no-color` flag and `NO_COLOR` environment variable
+- **🧪 Well-tested**: Comprehensive test suite with snapshot testing
 
 ## Development
 
