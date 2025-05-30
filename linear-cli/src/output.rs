@@ -5,10 +5,26 @@ use linear_sdk::{DetailedIssue, Issue, Result};
 use owo_colors::OwoColorize;
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::io::Write;
+use std::sync::OnceLock;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
+use syntect::util::as_24_bit_terminal_escaped;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
 use crate::types::IssueStatus;
+
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
+
+fn get_syntax_set() -> &'static SyntaxSet {
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn get_theme_set() -> &'static ThemeSet {
+    THEME_SET.get_or_init(ThemeSet::load_defaults)
+}
 
 pub trait OutputFormat {
     fn format_issues(&self, issues: &[Issue]) -> Result<String>;
@@ -207,6 +223,7 @@ impl TableFormatter {
 
         let mut current_text = String::new();
         let mut in_code_block = false;
+        let mut current_language = String::new();
         let mut is_heading = false;
         let mut heading_level = None;
         let mut in_link = false;
@@ -243,22 +260,36 @@ impl TableFormatter {
                         heading_level = None;
                     }
                 }
-                Event::Start(Tag::CodeBlock(_)) => {
+                Event::Start(Tag::CodeBlock(kind)) => {
                     in_code_block = true;
+                    current_language = match kind {
+                        pulldown_cmark::CodeBlockKind::Fenced(lang) => lang.to_string(),
+                        pulldown_cmark::CodeBlockKind::Indented => String::new(),
+                    };
+                    current_text.clear();
                     writeln!(output)?; // Add newline before code block
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     if in_code_block {
-                        // Process code content
-                        for line in current_text.lines() {
-                            if self.use_color {
-                                writeln!(output, "{}", line.on_black().white())?;
-                            } else {
-                                writeln!(output, "{}", line)?;
+                        // Apply syntax highlighting to the collected code
+                        match self.highlight_code(&current_text, &current_language) {
+                            Ok(highlighted) => {
+                                write!(output, "{}", highlighted)?;
+                            }
+                            Err(_) => {
+                                // Fallback to original behavior if highlighting fails
+                                for line in current_text.lines() {
+                                    if self.use_color {
+                                        writeln!(output, "{}", line.on_black().white())?;
+                                    } else {
+                                        writeln!(output, "{}", line)?;
+                                    }
+                                }
                             }
                         }
                         writeln!(output)?; // Add newline after code block
                         current_text.clear();
+                        current_language.clear();
                         in_code_block = false;
                     }
                 }
@@ -393,6 +424,51 @@ impl TableFormatter {
         }
 
         Ok(String::from_utf8(output)?)
+    }
+
+    fn get_syntax_for_language<'a>(
+        lang_hint: &str,
+        code: &str,
+    ) -> &'a syntect::parsing::SyntaxReference {
+        let ss = get_syntax_set();
+
+        ss.find_syntax_by_token(lang_hint)
+            .or_else(|| ss.find_syntax_by_extension(lang_hint))
+            .or_else(|| ss.find_syntax_by_first_line(code.lines().next().unwrap_or_default()))
+            .unwrap_or_else(|| ss.find_syntax_plain_text())
+    }
+
+    fn highlight_code(&self, code: &str, language: &str) -> anyhow::Result<String> {
+        // If color is disabled, return plain text
+        if !self.use_color {
+            return Ok(code.to_string());
+        }
+
+        let syntax_set = get_syntax_set();
+        let theme_set = get_theme_set();
+
+        let syntax = Self::get_syntax_for_language(language, code);
+
+        // Try different themes that might provide better contrast
+        let theme = theme_set
+            .themes
+            .get("Solarized (dark)")
+            .or_else(|| theme_set.themes.get("Monokai"))
+            .or_else(|| theme_set.themes.get("base16-eighties.dark"))
+            .or_else(|| theme_set.themes.get("base16-ocean.dark"))
+            .unwrap_or_else(|| theme_set.themes.values().next().unwrap());
+
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut output = String::new();
+
+        for line in code.lines() {
+            let ranges = highlighter.highlight_line(line, syntax_set)?;
+            let escaped = as_24_bit_terminal_escaped(&ranges[..], false); // No background color
+            output.push_str(&escaped);
+            output.push('\n');
+        }
+
+        Ok(output)
     }
 }
 
@@ -1113,9 +1189,10 @@ Final paragraph with normal text."#
         // Test that headers are properly formatted (will fail initially)
         assert!(result.contains("Markdown Test Issue")); // H1 should be rendered without #
 
-        // Test that code blocks are syntax highlighted (will fail initially)
+        // Test that code blocks are syntax highlighted
         assert!(!result.contains("```rust")); // Raw markdown should be replaced
-        assert!(result.contains("fn main()")); // Code content should remain
+        assert!(result.contains("fn")); // Code content should remain (may have ANSI codes)
+        assert!(result.contains("main")); // Code content should remain (may have ANSI codes)
 
         // Test that emphasis is rendered (will fail initially)
         assert!(!result.contains("**markdown content**")); // Raw markdown should be replaced
@@ -1436,5 +1513,337 @@ Test with:
         // Test that special characters are handled properly
         assert!(result.contains("🚀 ✨ 💻"));
         assert!(result.contains("< > & \" '"));
+    }
+
+    // Syntax highlighting tests
+    #[test]
+    fn test_highlight_rust_code() {
+        let formatter = TableFormatter::new(true);
+        let rust_code = r#"fn main() {
+    println!("Hello, World!");
+    let x = 42;
+}"#;
+
+        let result = formatter.highlight_code(rust_code, "rust").unwrap();
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+        // Should not contain the raw code block markers
+        assert!(!result.contains("```"));
+        // Should still contain the actual code structure (may have color codes interspersed)
+        assert!(result.contains("fn"));
+        assert!(result.contains("main"));
+        assert!(result.contains("println"));
+    }
+
+    #[test]
+    fn test_highlight_javascript_code() {
+        let formatter = TableFormatter::new(true);
+        let js_code = r#"function greet(name) {
+    console.log(`Hello, ${name}!`);
+    return true;
+}"#;
+
+        let result = formatter.highlight_code(js_code, "javascript").unwrap();
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+        // Should still contain the actual code
+        assert!(result.contains("function"));
+        assert!(result.contains("greet"));
+        assert!(result.contains("console"));
+        assert!(result.contains("log"));
+    }
+
+    #[test]
+    fn test_highlight_unknown_language_fallback() {
+        let formatter = TableFormatter::new(true);
+        let code = r#"some unknown code
+with multiple lines"#;
+
+        let result = formatter.highlight_code(code, "unknown-lang").unwrap();
+
+        // Should still return the code (might have minimal highlighting as plain text)
+        assert!(result.contains("some unknown code"));
+        assert!(result.contains("with multiple lines"));
+    }
+
+    #[test]
+    fn test_highlight_language_aliases() {
+        let formatter = TableFormatter::new(true);
+        let js_code = "const x = 42;";
+
+        // Test common aliases
+        let result_js = formatter.highlight_code(js_code, "js").unwrap();
+        let result_javascript = formatter.highlight_code(js_code, "javascript").unwrap();
+
+        // Both should produce highlighted output
+        assert!(result_js.contains("\x1b["));
+        assert!(result_javascript.contains("\x1b["));
+        assert!(result_js.contains("const"));
+        assert!(result_js.contains("x"));
+        assert!(result_javascript.contains("const"));
+        assert!(result_javascript.contains("x"));
+    }
+
+    #[test]
+    fn test_syntax_highlighting_disabled_when_no_color() {
+        let formatter = TableFormatter::new(false);
+        let rust_code = r#"fn main() {
+    println!("Hello, World!");
+}"#;
+
+        let result = formatter.highlight_code(rust_code, "rust").unwrap();
+
+        // Should not contain ANSI color codes when color is disabled
+        assert!(!result.contains("\x1b["));
+        // Should still contain the actual code
+        assert!(result.contains("fn main()"));
+        assert!(result.contains("println!"));
+    }
+
+    #[test]
+    fn test_code_block_syntax_highlighting_integration() {
+        let formatter = TableFormatter::new(true);
+        let markdown = r#"Here's some Rust code:
+
+```rust
+fn main() {
+    println!("Hello, World!");
+}
+```
+
+And some JavaScript:
+
+```javascript
+console.log("Hello, World!");
+```"#;
+
+        let result = formatter.render_markdown_to_terminal(markdown).unwrap();
+
+        // Should contain syntax highlighted code (no raw markdown)
+        assert!(!result.contains("```rust"));
+        assert!(!result.contains("```javascript"));
+        // Should contain the actual code
+        assert!(result.contains("fn"));
+        assert!(result.contains("main"));
+        assert!(result.contains("console"));
+        assert!(result.contains("log"));
+        // Should contain ANSI color codes for highlighting
+        assert!(result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_typescript_syntax_highlighting_debug() {
+        let formatter = TableFormatter::new(true);
+        let ts_code = "const f = (x: number): number => x + 1;";
+
+        let result = formatter.highlight_code(ts_code, "typescript").unwrap();
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+        // Should contain the actual code
+        assert!(result.contains("const"));
+        assert!(result.contains("number"));
+        assert!(result.contains("=>"));
+
+        // Result should be longer than original due to ANSI codes
+        assert!(result.len() > ts_code.len());
+    }
+
+    #[test]
+    fn test_various_language_syntax_highlighting() {
+        let formatter = TableFormatter::new(true);
+
+        // Test various language aliases
+        let test_cases = vec![
+            ("typescript", "const x: number = 42;"),
+            ("ts", "interface User { name: string; }"),
+            ("jsx", "const el = <div>Hello</div>;"),
+            (
+                "tsx",
+                "const Component: React.FC = () => <div>TypeScript JSX</div>;",
+            ),
+            ("python3", "def hello() -> None: print('Hello')"),
+            ("rs", "fn main() { println!(\"Hello\"); }"),
+            ("go", "func main() { fmt.Println(\"Hello\") }"),
+            ("cpp", "int main() { std::cout << \"Hello\"; }"),
+            (
+                "csharp",
+                "public static void Main() { Console.WriteLine(\"Hello\"); }",
+            ),
+        ];
+
+        for (lang, code) in test_cases {
+            let result = formatter.highlight_code(code, lang).unwrap();
+
+            // All should have syntax highlighting (ANSI codes)
+            assert!(
+                result.contains("\x1b["),
+                "Language '{}' should have syntax highlighting",
+                lang
+            );
+
+            // Should contain the original code content
+            assert!(
+                result.contains(code.split_whitespace().next().unwrap()),
+                "Language '{}' should preserve code content",
+                lang
+            );
+        }
+    }
+
+    #[test]
+    fn test_markdown_with_typescript_code_block() {
+        let formatter = TableFormatter::new(true);
+        let markdown = r#"## TypeScript Example
+
+Here's a TypeScript function:
+
+```typescript
+const f = (x: number): number => x + 1;
+```
+
+And here's the same with `ts` alias:
+
+```ts
+interface User {
+    name: string;
+    age: number;
+}
+```"#;
+
+        let result = formatter.render_markdown_to_terminal(markdown).unwrap();
+
+        // Should not contain raw markdown code block markers
+        assert!(!result.contains("```typescript"));
+        assert!(!result.contains("```ts"));
+
+        // Should contain the actual code
+        assert!(result.contains("const"));
+        assert!(result.contains("interface"));
+        assert!(result.contains("number"));
+
+        // Should contain ANSI color codes for syntax highlighting
+        assert!(result.contains("\x1b["));
+
+        // Should contain properly formatted headers
+        assert!(result.contains("TypeScript Example"));
+        assert!(result.contains("Here's a TypeScript function:"));
+    }
+
+    // Tests for syntect's built-in language detection
+
+    #[test]
+    fn test_explicit_token_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test that explicit tokens are detected correctly
+        let test_cases = vec![
+            ("js", "const x = 42;"),
+            ("ts", "const x: number = 42;"),
+            ("rs", "fn main() {}"),
+            ("python", "def hello(): pass"),
+            ("bash", "echo 'hello'"),
+        ];
+
+        for (token, code) in test_cases {
+            let result = formatter.highlight_code(code, token).unwrap();
+
+            // Should contain ANSI color codes (indicating highlighting worked)
+            assert!(
+                result.contains("\x1b["),
+                "Token '{}' should produce syntax highlighting",
+                token
+            );
+
+            // Should contain the original code
+            assert!(
+                result.contains(code.split_whitespace().next().unwrap()),
+                "Token '{}' should preserve code content",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_shebang_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test shebang detection
+        let bash_script = "#!/bin/bash\necho 'Hello World'";
+        let result = formatter.highlight_code(bash_script, "").unwrap(); // No language hint
+
+        // Should detect bash from shebang and highlight accordingly
+        assert!(
+            result.contains("\x1b["),
+            "Shebang should trigger bash highlighting"
+        );
+        assert!(result.contains("echo"), "Should preserve script content");
+
+        // Test Python shebang
+        let python_script = "#!/usr/bin/env python3\nprint('Hello')";
+        let result = formatter.highlight_code(python_script, "").unwrap();
+
+        // Should detect python from shebang and highlight accordingly
+        assert!(
+            result.contains("\x1b["),
+            "Python shebang should trigger highlighting"
+        );
+        assert!(result.contains("print"), "Should preserve Python content");
+    }
+
+    #[test]
+    fn test_plain_text_fallback() {
+        let formatter = TableFormatter::new(true);
+
+        // Test unknown language with no shebang falls back to plain text
+        let unknown_code = "some random text\nwith no special syntax";
+        let result = formatter
+            .highlight_code(unknown_code, "unknown-language")
+            .unwrap();
+
+        // Plain text highlighting might still add minimal ANSI codes,
+        // but should preserve the content
+        assert!(
+            result.contains("some random text"),
+            "Should preserve plain text content"
+        );
+        assert!(
+            result.contains("with no special syntax"),
+            "Should preserve all content"
+        );
+
+        // Test empty language hint with no shebang
+        let plain_text = "just some plain text";
+        let result = formatter.highlight_code(plain_text, "").unwrap();
+
+        assert!(
+            result.contains("just some plain text"),
+            "Should preserve content for empty language hint"
+        );
+    }
+
+    #[test]
+    fn test_extension_detection() {
+        let formatter = TableFormatter::new(true);
+
+        // Test that file extensions are still detected correctly
+        let test_cases = vec![
+            ("py", "print('hello')"), // Should detect as Python
+            ("rs", "fn main() {}"),   // Should detect as Rust
+            ("js", "console.log();"), // Should detect as JavaScript
+        ];
+
+        for (ext, code) in test_cases {
+            let result = formatter.highlight_code(code, ext).unwrap();
+
+            // Should contain ANSI color codes (indicating highlighting worked)
+            assert!(
+                result.contains("\x1b["),
+                "Extension '{}' should produce syntax highlighting",
+                ext
+            );
+        }
     }
 }
