@@ -1348,7 +1348,7 @@ Final paragraph with normal text."#
             std::env::remove_var("TERM_PROGRAM");
             std::env::remove_var("WT_SESSION");
             std::env::remove_var("VTE_VERSION");
-            std::env::set_var("TERM", "xterm");
+            std::env::set_var("TERM", "dumb");
 
             let result = formatter.format_detailed_issue(&issue).unwrap();
 
