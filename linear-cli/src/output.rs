@@ -3,6 +3,8 @@
 
 use linear_sdk::{DetailedIssue, Issue, Result};
 use owo_colors::OwoColorize;
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use std::io::Write;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
@@ -11,6 +13,11 @@ use crate::types::IssueStatus;
 pub trait OutputFormat {
     fn format_issues(&self, issues: &[Issue]) -> Result<String>;
     fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String>;
+    fn format_detailed_issue_rich(
+        &self,
+        issue: &DetailedIssue,
+        is_interactive: bool,
+    ) -> Result<String>;
 }
 
 pub struct TableFormatter {
@@ -112,21 +119,32 @@ impl TableFormatter {
 
     fn format_labels(&self, labels: &[linear_sdk::IssueLabel]) -> String {
         if labels.is_empty() {
-            return "None".to_string();
+            if self.use_color {
+                return "None".dimmed().to_string();
+            } else {
+                return "None".to_string();
+            }
         }
 
         labels
             .iter()
-            .map(|l| {
+            .enumerate()
+            .map(|(i, l)| {
                 if self.use_color {
-                    // For now, just use a simple colored format
-                    format!("{}", l.name.cyan())
+                    // Use different colors for visual variety
+                    let colored_name = match i % 4 {
+                        0 => l.name.cyan().to_string(),
+                        1 => l.name.purple().to_string(),
+                        2 => l.name.green().to_string(),
+                        _ => l.name.yellow().to_string(),
+                    };
+                    format!("●{}", colored_name.bold())
                 } else {
-                    l.name.clone()
+                    format!("● {}", l.name)
                 }
             })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("  ")
     }
 
     fn format_datetime(&self, datetime: &str) -> String {
@@ -135,6 +153,194 @@ impl TableFormatter {
         } else {
             datetime.to_string()
         }
+    }
+
+    fn render_markdown_to_terminal(&self, markdown: &str) -> anyhow::Result<String> {
+        let mut output = Vec::new();
+        let parser = Parser::new(markdown);
+
+        let mut current_text = String::new();
+        let mut in_code_block = false;
+        let mut is_heading = false;
+        let mut heading_level = None;
+        let mut in_link = false;
+        let mut current_link_url = String::new();
+        let mut in_strong = false;
+        let mut in_emphasis = false;
+
+        for event in parser {
+            match event {
+                Event::Start(Tag::Heading { level, .. }) => {
+                    is_heading = true;
+                    heading_level = Some(level);
+                    current_text.clear();
+                    writeln!(output)?; // Add newline before heading
+                }
+                Event::End(TagEnd::Heading(_)) => {
+                    if is_heading {
+                        let heading_text = if self.use_color {
+                            match heading_level {
+                                Some(pulldown_cmark::HeadingLevel::H1) => {
+                                    current_text.bold().underline().to_string()
+                                }
+                                _ => current_text.bold().to_string(),
+                            }
+                        } else {
+                            current_text.clone()
+                        };
+                        writeln!(output, "{}", heading_text)?;
+                        writeln!(output)?; // Add newline after heading
+                        current_text.clear();
+                        is_heading = false;
+                        heading_level = None;
+                    }
+                }
+                Event::Start(Tag::CodeBlock(_)) => {
+                    in_code_block = true;
+                    writeln!(output)?; // Add newline before code block
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    if in_code_block {
+                        // Process code content
+                        for line in current_text.lines() {
+                            if self.use_color {
+                                writeln!(output, "{}", line.on_black().white())?;
+                            } else {
+                                writeln!(output, "{}", line)?;
+                            }
+                        }
+                        writeln!(output)?; // Add newline after code block
+                        current_text.clear();
+                        in_code_block = false;
+                    }
+                }
+                Event::Text(text) => {
+                    if in_code_block || in_link {
+                        current_text.push_str(&text);
+                    } else if is_heading {
+                        // For headings, build formatted content in current_text
+                        if in_strong && self.use_color {
+                            current_text.push_str(&text.bold().to_string());
+                        } else if in_emphasis && self.use_color {
+                            current_text.push_str(&text.italic().to_string());
+                        } else {
+                            current_text.push_str(&text);
+                        }
+                    } else if in_strong && self.use_color {
+                        write!(output, "{}", text.bold())?;
+                    } else if in_emphasis && self.use_color {
+                        write!(output, "{}", text.italic())?;
+                    } else {
+                        write!(output, "{}", text)?;
+                    }
+                }
+                Event::Code(code) => {
+                    if is_heading {
+                        // For headings, append formatted code to current_text
+                        if self.use_color {
+                            current_text.push_str(&code.on_black().white().to_string());
+                        } else {
+                            current_text.push_str(&format!("`{}`", code));
+                        }
+                    } else if self.use_color {
+                        write!(output, "{}", code.on_black().white())?;
+                    } else {
+                        write!(output, "`{}`", code)?;
+                    }
+                }
+                Event::Start(Tag::Emphasis) => {
+                    in_emphasis = true;
+                }
+                Event::End(TagEnd::Emphasis) => {
+                    in_emphasis = false;
+                }
+                Event::Start(Tag::Strong) => {
+                    in_strong = true;
+                }
+                Event::End(TagEnd::Strong) => {
+                    in_strong = false;
+                }
+                Event::Start(Tag::List(_)) => {
+                    writeln!(output)?;
+                }
+                Event::End(TagEnd::List(_)) => {
+                    writeln!(output)?;
+                }
+                Event::Start(Tag::Item) => {
+                    write!(output, "• ")?;
+                }
+                Event::End(TagEnd::Item) => {
+                    writeln!(output)?;
+                }
+                Event::Start(Tag::BlockQuote(_)) => {
+                    if self.use_color {
+                        write!(output, "{}", "│ ".dimmed())?;
+                    } else {
+                        write!(output, "│ ")?;
+                    }
+                }
+                Event::End(TagEnd::BlockQuote(_)) => {
+                    writeln!(output)?;
+                }
+                Event::Start(Tag::Paragraph) => {
+                    writeln!(output)?;
+                }
+                Event::End(TagEnd::Paragraph) => {
+                    writeln!(output)?;
+                }
+                Event::Start(Tag::Link { dest_url, .. }) => {
+                    // For links, we'll capture the text and check for media
+                    in_link = true;
+                    current_link_url = dest_url.to_string();
+                    current_text.clear();
+                }
+                Event::End(TagEnd::Link) => {
+                    // Check if this is a media link
+                    if current_link_url.contains("uploads.linear.app") {
+                        // This is embedded media - show with clickable URL
+                        if self.use_color {
+                            write!(
+                                output,
+                                "{}{}{}\n{}{}{}",
+                                "📎 ".white(),
+                                "Media: ".cyan().bold(),
+                                current_text.white(),
+                                "   ".dimmed(),
+                                "🔗 ".dimmed(),
+                                current_link_url.underline().blue()
+                            )?;
+                        } else {
+                            write!(
+                                output,
+                                "📎 Media: {}\n   🔗 {}",
+                                current_text, current_link_url
+                            )?;
+                        }
+                    } else {
+                        // Regular link - just show the link text with URL styling
+                        if self.use_color {
+                            write!(output, "{}", current_text.underline().cyan())?;
+                        } else {
+                            write!(output, "{}", current_text)?;
+                        }
+                    }
+                    current_text.clear();
+                    current_link_url.clear();
+                    in_link = false;
+                }
+                Event::SoftBreak => {
+                    write!(output, " ")?;
+                }
+                Event::HardBreak => {
+                    writeln!(output)?;
+                }
+                _ => {
+                    // Handle other events with basic text output
+                }
+            }
+        }
+
+        Ok(String::from_utf8(output)?)
     }
 }
 
@@ -163,6 +369,15 @@ impl OutputFormat for JsonFormatter {
         } else {
             Ok(serde_json::to_string(issue)?)
         }
+    }
+
+    fn format_detailed_issue_rich(
+        &self,
+        issue: &DetailedIssue,
+        _is_interactive: bool,
+    ) -> Result<String> {
+        // JSON format doesn't change based on interactivity
+        self.format_detailed_issue(issue)
     }
 }
 
@@ -226,25 +441,160 @@ impl OutputFormat for TableFormatter {
 
         if let Some(description) = &issue.description {
             output.push(String::new());
-            output.push("Description:".to_string());
+            if self.use_color {
+                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
+            } else {
+                output.push("📝 Description:".to_string());
+            }
             output.push(description.clone());
         }
 
+        // Metadata section with enhanced formatting
         output.push(String::new());
-        output.push(format!("Labels: {}", self.format_labels(&issue.labels)));
+        if self.use_color {
+            output.push(format!(
+                "{}{}{}",
+                "🏷️ ".white(),
+                "Labels: ".cyan(),
+                self.format_labels(&issue.labels)
+            ));
+        } else {
+            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
+        }
 
         output.push(String::new());
-        output.push(format!(
-            "Created: {}",
-            self.format_datetime(&issue.created_at)
-        ));
-        output.push(format!(
-            "Updated: {}",
-            self.format_datetime(&issue.updated_at)
-        ));
+        if self.use_color {
+            output.push(format!(
+                "{}{} {}    {} {}",
+                "📅 ".white(),
+                "Created:".cyan(),
+                self.format_datetime(&issue.created_at).white(),
+                "Updated:".cyan(),
+                self.format_datetime(&issue.updated_at).white()
+            ));
+        } else {
+            output.push(format!(
+                "📅 Created: {}    Updated: {}",
+                self.format_datetime(&issue.created_at),
+                self.format_datetime(&issue.updated_at)
+            ));
+        }
 
         output.push(String::new());
-        output.push(format!("View in Linear: {}", issue.url));
+        if self.use_color {
+            output.push(format!(
+                "{}{}\n   {}",
+                "🔗 ".white(),
+                "View in Linear:".cyan(),
+                issue.url.underline().blue()
+            ));
+        } else {
+            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
+        }
+
+        Ok(output.join("\n"))
+    }
+
+    fn format_detailed_issue_rich(
+        &self,
+        issue: &DetailedIssue,
+        is_interactive: bool,
+    ) -> Result<String> {
+        // If not interactive (piped/redirected), use raw markdown
+        if !is_interactive {
+            return self.format_detailed_issue(issue);
+        }
+
+        // For interactive terminals, render markdown if present in description
+        let border_line = "─".repeat(50);
+        let title_line = if self.use_color {
+            format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
+        } else {
+            format!("{}: {}", issue.identifier, issue.title)
+        };
+
+        let mut output = vec![
+            border_line.clone(),
+            title_line,
+            border_line,
+            format!("Status:     {}", self.format_status(&issue.state.name)),
+            format!(
+                "Assignee:   {}",
+                self.format_detailed_assignee(&issue.assignee)
+            ),
+            format!("Team:       {}", self.format_team(&issue.team)),
+        ];
+
+        if let Some(project) = &issue.project {
+            output.push(format!("Project:    {}", project.name));
+        }
+
+        output.push(format!(
+            "Priority:   {}",
+            self.format_priority(issue.priority, &issue.priority_label)
+        ));
+
+        // Enhanced markdown rendering for description in interactive mode
+        if let Some(description) = &issue.description {
+            output.push(String::new());
+            if self.use_color {
+                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
+            } else {
+                output.push("📝 Description:".to_string());
+            }
+
+            // Render markdown to terminal if interactive
+            match self.render_markdown_to_terminal(description) {
+                Ok(rendered) => output.push(rendered),
+                Err(_) => {
+                    // Fallback to raw markdown if rendering fails
+                    output.push(description.clone());
+                }
+            }
+        }
+
+        // Metadata section with enhanced formatting
+        output.push(String::new());
+        if self.use_color {
+            output.push(format!(
+                "{}{}{}",
+                "🏷️ ".white(),
+                "Labels: ".cyan(),
+                self.format_labels(&issue.labels)
+            ));
+        } else {
+            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
+        }
+
+        output.push(String::new());
+        if self.use_color {
+            output.push(format!(
+                "{}{} {}    {} {}",
+                "📅 ".white(),
+                "Created:".cyan(),
+                self.format_datetime(&issue.created_at).white(),
+                "Updated:".cyan(),
+                self.format_datetime(&issue.updated_at).white()
+            ));
+        } else {
+            output.push(format!(
+                "📅 Created: {}    Updated: {}",
+                self.format_datetime(&issue.created_at),
+                self.format_datetime(&issue.updated_at)
+            ));
+        }
+
+        output.push(String::new());
+        if self.use_color {
+            output.push(format!(
+                "{}{}\n   {}",
+                "🔗 ".white(),
+                "View in Linear:".cyan(),
+                issue.url.underline().blue()
+            ));
+        } else {
+            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
+        }
 
         Ok(output.join("\n"))
     }
@@ -535,10 +885,11 @@ mod tests {
         assert!(result.contains("Priority:   High"));
         assert!(result.contains("Description:"));
         assert!(result.contains("Users are experiencing race conditions"));
-        assert!(result.contains("Labels: bug, authentication"));
+        assert!(result.contains("🏷️ Labels: ● bug  ● authentication"));
         assert!(result.contains("Created:"));
         assert!(result.contains("Updated:"));
-        assert!(result.contains("View in Linear: https://linear.app/test/issue/ENG-123"));
+        assert!(result.contains("View in Linear:"));
+        assert!(result.contains("https://linear.app/test/issue/ENG-123"));
     }
 
     #[test]
@@ -612,5 +963,176 @@ mod tests {
         assert!(result.contains("Labels: None"));
         assert!(!result.contains("Project:"));
         assert!(!result.contains("Description:"));
+    }
+
+    fn create_markdown_test_issue() -> linear_sdk::DetailedIssue {
+        use linear_sdk::*;
+
+        DetailedIssue {
+            id: "issue-id-markdown".to_string(),
+            identifier: "ENG-456".to_string(),
+            title: "Test markdown formatting".to_string(),
+            description: Some(
+                r#"# Markdown Test Issue
+
+This is a test issue with **markdown content** to verify rich formatting.
+
+## Features to test:
+- [x] Headers (H1-H6)
+- [ ] Code blocks with syntax highlighting
+- [ ] Lists (ordered and unordered)
+- [ ] Links and emphasis
+
+### Code Example:
+
+```rust
+fn main() {
+    println!("Hello, World!");
+}
+```
+
+### Links and Text Formatting:
+
+Check out [Linear](https://linear.app) for more details.
+
+Some text with *italics* and **bold** formatting.
+
+> This is a blockquote
+> spanning multiple lines
+
+Final paragraph with normal text."#
+                    .to_string(),
+            ),
+            state: IssueState {
+                name: "In Progress".to_string(),
+                type_: "started".to_string(),
+            },
+            assignee: Some(IssueAssignee {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            }),
+            team: Some(IssueTeam {
+                key: "ENG".to_string(),
+                name: "Engineering".to_string(),
+            }),
+            project: Some(IssueProject {
+                name: "Markdown Test".to_string(),
+            }),
+            labels: vec![IssueLabel {
+                name: "documentation".to_string(),
+                color: "#0066CC".to_string(),
+            }],
+            priority: Some(3),
+            priority_label: Some("Normal".to_string()),
+            created_at: "2024-01-15T10:30:00Z".to_string(),
+            updated_at: "2024-01-16T14:45:00Z".to_string(),
+            url: "https://linear.app/test/issue/ENG-456".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_markdown_formatting_with_tty_detection() {
+        let formatter = TableFormatter::new(false);
+        let issue = create_markdown_test_issue();
+
+        let result = formatter.format_detailed_issue(&issue).unwrap();
+
+        // This test should currently pass (raw markdown), but will be updated
+        // to test rich formatting when TTY detection is implemented
+        assert!(result.contains("# Markdown Test Issue"));
+        assert!(result.contains("**markdown content**"));
+        assert!(result.contains("```rust"));
+        assert!(result.contains("fn main()"));
+        assert!(result.contains("[Linear](https://linear.app)"));
+    }
+
+    #[test]
+    fn test_rich_markdown_formatting_interactive() {
+        let formatter = TableFormatter::new(true);
+        let issue = create_markdown_test_issue();
+
+        // TODO: This test will fail until we implement markdown parsing
+        // When implemented, this should render rich formatted output
+        let result = formatter.format_detailed_issue_rich(&issue, true).unwrap();
+
+        // Test that headers are properly formatted (will fail initially)
+        assert!(result.contains("Markdown Test Issue")); // H1 should be rendered without #
+
+        // Test that code blocks are syntax highlighted (will fail initially)
+        assert!(!result.contains("```rust")); // Raw markdown should be replaced
+        assert!(result.contains("fn main()")); // Code content should remain
+
+        // Test that emphasis is rendered (will fail initially)
+        assert!(!result.contains("**markdown content**")); // Raw markdown should be replaced
+
+        // Test that links are rendered (will fail initially)
+        assert!(!result.contains("[Linear](https://linear.app)")); // Raw markdown should be replaced
+        assert!(result.contains("Linear")); // Link text should remain
+    }
+
+    #[test]
+    fn test_raw_markdown_when_piped() {
+        let formatter = TableFormatter::new(false);
+        let issue = create_markdown_test_issue();
+
+        // When output is piped (not interactive), should preserve raw markdown
+        let result = formatter.format_detailed_issue_rich(&issue, false).unwrap();
+
+        // Should contain raw markdown (same as current behavior)
+        assert!(result.contains("# Markdown Test Issue"));
+        assert!(result.contains("**markdown content**"));
+        assert!(result.contains("```rust"));
+        assert!(result.contains("[Linear](https://linear.app)"));
+    }
+
+    #[test]
+    fn test_markdown_edge_cases() {
+        use linear_sdk::*;
+
+        let edge_case_issue = DetailedIssue {
+            id: "issue-edge".to_string(),
+            identifier: "ENG-999".to_string(),
+            title: "Edge case test".to_string(),
+            description: Some(
+                r#"
+# Empty lines and special characters
+
+Test with:
+- Unicode: 🚀 ✨ 💻
+- Special chars: < > & " '
+- Empty code block:
+```
+
+```
+
+- Mixed formatting: **bold _italic_** text
+"#
+                .to_string(),
+            ),
+            state: IssueState {
+                name: "Todo".to_string(),
+                type_: "unstarted".to_string(),
+            },
+            assignee: None,
+            team: None,
+            project: None,
+            labels: vec![],
+            priority: None,
+            priority_label: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+            url: "https://linear.app/test/issue/ENG-999".to_string(),
+        };
+
+        let formatter = TableFormatter::new(true);
+
+        // TODO: This will fail until markdown rendering is implemented
+        let result = formatter
+            .format_detailed_issue_rich(&edge_case_issue, true)
+            .unwrap();
+
+        // Test that special characters are handled properly
+        assert!(result.contains("🚀 ✨ 💻"));
+        assert!(result.contains("< > & \" '"));
     }
 }

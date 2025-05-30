@@ -27,6 +27,11 @@ cargo run -p linear-cli -- [args]
 # Example: List issues without color
 cargo run -p linear-cli -- --no-color issues
 
+# Development Note: API Key vs OAuth
+# For development, using the API key (from .env file) is recommended over OAuth
+# to avoid repeated macOS keychain permission dialogs when rebuilding binaries.
+# The .env file contains LINEAR_API_KEY which is automatically loaded.
+
 # Build release version
 cargo build --release --workspace
 

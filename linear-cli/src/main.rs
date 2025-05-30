@@ -91,6 +91,10 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+
+        /// Force raw markdown output (skip rich formatting)
+        #[arg(long)]
+        raw: bool,
     },
     /// Check connection to Linear
     Status {
@@ -319,7 +323,7 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                 println!("{}", output);
             }
         }
-        Commands::Issue { id, json } => {
+        Commands::Issue { id, json, raw } => {
             let spinner = create_spinner(&format!("Fetching issue {}...", id));
             match client.get_issue(id).await {
                 Ok(issue) => {
@@ -335,7 +339,9 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                         }
                     } else {
                         let formatter = TableFormatter::new(use_color);
-                        match formatter.format_detailed_issue(&issue) {
+                        // Default to interactive for better UX, allow --raw to override
+                        let is_interactive = !raw;
+                        match formatter.format_detailed_issue_rich(&issue, is_interactive) {
                             Ok(output) => output,
                             Err(e) => {
                                 display_error(&e, use_color);
@@ -555,9 +561,10 @@ mod tests {
         // Test basic issue command
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-123"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json } => {
+            Commands::Issue { id, json, raw } => {
                 assert_eq!(id, "ENG-123");
                 assert!(!json);
+                assert!(!raw);
             }
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
@@ -567,9 +574,10 @@ mod tests {
         // Test issue command with JSON
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-456", "--json"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json } => {
+            Commands::Issue { id, json, raw } => {
                 assert_eq!(id, "ENG-456");
                 assert!(json);
+                assert!(!raw);
             }
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
@@ -579,9 +587,36 @@ mod tests {
         // Test issue command with UUID
         let cli = Cli::try_parse_from(["linear", "issue", "abc-123-def-456"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json } => {
+            Commands::Issue { id, json, raw } => {
                 assert_eq!(id, "abc-123-def-456");
                 assert!(!json);
+                assert!(!raw);
+            }
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            _ => panic!("Expected Issue command"),
+        }
+
+        // Test issue command with --raw flag
+        let cli = Cli::try_parse_from(["linear", "issue", "ENG-789", "--raw"]).unwrap();
+        match cli.command {
+            Commands::Issue { id, json, raw } => {
+                assert_eq!(id, "ENG-789");
+                assert!(!json);
+                assert!(raw);
+            }
+            #[cfg(feature = "oauth")]
+            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            _ => panic!("Expected Issue command"),
+        }
+
+        // Test issue command with both --json and --raw flags
+        let cli = Cli::try_parse_from(["linear", "issue", "ENG-999", "--json", "--raw"]).unwrap();
+        match cli.command {
+            Commands::Issue { id, json, raw } => {
+                assert_eq!(id, "ENG-999");
+                assert!(json);
+                assert!(raw);
             }
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
