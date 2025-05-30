@@ -6,13 +6,29 @@ use indicatif::{ProgressBar, ProgressStyle};
 use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
 use std::env;
+use std::io::IsTerminal;
 
 mod output;
 mod types;
 
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
-fn create_spinner(message: &str) -> ProgressBar {
+fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool) -> bool {
+    if force_color_flag {
+        return true;
+    }
+
+    !no_color_flag
+        && env::var("NO_COLOR").is_err()
+        && env::var("TERM").unwrap_or_default() != "dumb"
+        && is_tty
+}
+
+fn create_spinner(message: &str, is_interactive: bool) -> Option<ProgressBar> {
+    if !is_interactive {
+        return None;
+    }
+
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
@@ -22,7 +38,7 @@ fn create_spinner(message: &str) -> ProgressBar {
     );
     pb.set_message(message.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
-    pb
+    Some(pb)
 }
 
 fn display_error(error: &LinearError, use_color: bool) {
@@ -47,6 +63,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_color: bool,
 
+    /// Force colored output even when piped
+    #[arg(long, global = true, conflicts_with = "no_color")]
+    force_color: bool,
+
     /// Enable verbose output for debugging
     #[arg(long, short, global = true)]
     verbose: bool,
@@ -60,7 +80,7 @@ enum Commands {
     /// List issues
     Issues {
         /// Maximum number of issues to fetch
-        #[arg(short, long, default_value = "20")]
+        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
         limit: i32,
 
         /// Output as JSON
@@ -123,9 +143,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Determine if color should be used
-    let use_color = !cli.no_color
-        && env::var("NO_COLOR").is_err()
-        && env::var("TERM").unwrap_or_default() != "dumb";
+    let use_color = determine_use_color(
+        cli.no_color,
+        cli.force_color,
+        std::io::stdout().is_terminal(),
+    );
 
     // Handle OAuth commands first (synchronous commands)
     match &cli.command {
@@ -173,11 +195,13 @@ fn main() -> Result<()> {
         }
         #[cfg(feature = "oauth")]
         Commands::Logout => {
-            let spinner = create_spinner("Logging out...");
+            let spinner = create_spinner("Logging out...", use_color);
             // We don't need a valid OAuth manager to logout, just need to clear the storage
             match linear_sdk::storage::clear() {
                 Ok(_) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     if use_color {
                         println!("{} Successfully logged out!", "✓".green());
                     } else {
@@ -186,7 +210,9 @@ fn main() -> Result<()> {
                     Ok(())
                 }
                 Err(e) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     display_error(&LinearError::from(e), use_color);
                     std::process::exit(1);
                 }
@@ -195,12 +221,12 @@ fn main() -> Result<()> {
         _ => {
             // Continue with async commands
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async move { run_async_commands(cli, use_color).await })
+            runtime.block_on(async move { run_async_commands(cli, use_color, use_color).await })
         }
     }
 }
 
-async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
+async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
     // Authentication priority:
     // 1. Command line --api-key (not implemented yet)
     // 2. LINEAR_API_KEY env var
@@ -229,7 +255,7 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
         }
     };
 
-    let spinner = create_spinner("Connecting to Linear...");
+    let spinner = create_spinner("Connecting to Linear...", is_interactive);
 
     // Determine if this is an OAuth token (from keychain) or API key
     let is_oauth_token = env::var("LINEAR_API_KEY").is_err();
@@ -238,11 +264,15 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
         #[cfg(feature = "oauth")]
         match LinearClient::new_with_oauth_token_and_verbose(auth_token, cli.verbose) {
             Ok(client) => {
-                spinner.finish_and_clear();
+                if let Some(s) = spinner {
+                    s.finish_and_clear();
+                }
                 client
             }
             Err(e) => {
-                spinner.finish_and_clear();
+                if let Some(s) = spinner {
+                    s.finish_and_clear();
+                }
                 display_error(&e, use_color);
                 std::process::exit(1);
             }
@@ -255,11 +285,15 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
     } else {
         match LinearClient::new_with_verbose(auth_token, cli.verbose) {
             Ok(client) => {
-                spinner.finish_and_clear();
+                if let Some(s) = spinner {
+                    s.finish_and_clear();
+                }
                 client
             }
             Err(e) => {
-                spinner.finish_and_clear();
+                if let Some(s) = spinner {
+                    s.finish_and_clear();
+                }
                 display_error(&e, use_color);
                 std::process::exit(1);
             }
@@ -285,22 +319,26 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                 None
             };
 
-            let spinner = create_spinner("Fetching issues...");
+            let spinner = create_spinner("Fetching issues...", is_interactive);
             let issues = match client.list_issues_filtered(limit, filters).await {
                 Ok(issues) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     issues
                 }
                 Err(e) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
             };
 
-            if issues.is_empty() && !json {
+            if issues.is_empty() && !json && is_interactive {
                 println!("No issues found.");
-            } else {
+            } else if !issues.is_empty() {
                 let output = if json {
                     let formatter = JsonFormatter::new(pretty);
                     match formatter.format_issues(&issues) {
@@ -311,7 +349,7 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                         }
                     }
                 } else {
-                    let formatter = TableFormatter::new(use_color);
+                    let formatter = TableFormatter::new_with_interactive(use_color, is_interactive);
                     match formatter.format_issues(&issues) {
                         Ok(output) => output,
                         Err(e) => {
@@ -324,10 +362,12 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
             }
         }
         Commands::Issue { id, json, raw } => {
-            let spinner = create_spinner(&format!("Fetching issue {}...", id));
+            let spinner = create_spinner(&format!("Fetching issue {}...", id), is_interactive);
             match client.get_issue(id).await {
                 Ok(issue) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     let output = if json {
                         let formatter = JsonFormatter::new(false);
                         match formatter.format_detailed_issue(&issue) {
@@ -338,10 +378,11 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                             }
                         }
                     } else {
-                        let formatter = TableFormatter::new(use_color);
-                        // Default to interactive for better UX, allow --raw to override
-                        let is_interactive = !raw;
-                        match formatter.format_detailed_issue_rich(&issue, is_interactive) {
+                        let formatter =
+                            TableFormatter::new_with_interactive(use_color, is_interactive);
+                        // Use TTY detection for rich formatting, allow --raw to override
+                        let use_rich_formatting = is_interactive && !raw;
+                        match formatter.format_detailed_issue_rich(&issue, use_rich_formatting) {
                             Ok(output) => output,
                             Err(e) => {
                                 display_error(&e, use_color);
@@ -352,40 +393,50 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                     println!("{}", output);
                 }
                 Err(e) => {
-                    spinner.finish_and_clear();
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
             }
         }
         Commands::Status { verbose } => {
-            let spinner = create_spinner("Checking Linear connection...");
+            let spinner = create_spinner("Checking Linear connection...", is_interactive);
             match client.execute_viewer_query().await {
                 Ok(viewer_data) => {
-                    spinner.finish_and_clear();
-                    if use_color {
-                        println!("{} Connected to Linear", "✓".green());
-                    } else {
-                        println!("✓ Connected to Linear");
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
                     }
+                    if is_interactive {
+                        if use_color {
+                            println!("{} Connected to Linear", "✓".green());
+                        } else {
+                            println!("✓ Connected to Linear");
+                        }
 
-                    if verbose {
-                        println!();
-                        println!(
-                            "User: {} ({})",
-                            viewer_data.viewer.name, viewer_data.viewer.email
-                        );
-                        println!("User ID: {}", viewer_data.viewer.id);
+                        if verbose {
+                            println!();
+                            println!(
+                                "User: {} ({})",
+                                viewer_data.viewer.name, viewer_data.viewer.email
+                            );
+                            println!("User ID: {}", viewer_data.viewer.id);
+                        }
                     }
                 }
                 Err(e) => {
-                    spinner.finish_and_clear();
-                    if use_color {
-                        println!("{} Failed to connect to Linear", "✗".red());
-                    } else {
-                        println!("✗ Failed to connect to Linear");
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
                     }
-                    println!();
+                    if is_interactive {
+                        if use_color {
+                            println!("{} Failed to connect to Linear", "✗".red());
+                        } else {
+                            println!("✗ Failed to connect to Linear");
+                        }
+                        println!();
+                    }
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -405,6 +456,7 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use serial_test::serial;
 
     #[test]
     fn test_cli_structure() {
@@ -765,6 +817,147 @@ mod tests {
         match cli.command {
             Commands::Status { .. } => {} // Success - parsing works without auth
             _ => panic!("Expected Status command"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_determine_use_color_with_tty() {
+        // Save original env vars
+        let original_no_color = std::env::var("NO_COLOR").ok();
+        let original_term = std::env::var("TERM").ok();
+
+        unsafe {
+            // Clear env vars to test default behavior
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("TERM");
+
+            // Mock a TTY scenario (we can't directly mock IsTerminal)
+            // but we can test the logic separately
+            let use_color = determine_use_color(false, false, true);
+            assert!(use_color);
+
+            // Test with no-color flag
+            let use_color = determine_use_color(true, false, true);
+            assert!(!use_color);
+
+            // Test with NO_COLOR env var
+            std::env::set_var("NO_COLOR", "1");
+            let use_color = determine_use_color(false, false, true);
+            assert!(!use_color);
+            std::env::remove_var("NO_COLOR");
+
+            // Test with TERM=dumb
+            std::env::set_var("TERM", "dumb");
+            let use_color = determine_use_color(false, false, true);
+            assert!(!use_color);
+
+            // Test non-TTY (piped/redirected)
+            std::env::remove_var("TERM");
+            let use_color = determine_use_color(false, false, false);
+            assert!(!use_color);
+
+            // Test force-color overrides non-TTY
+            let use_color = determine_use_color(false, true, false);
+            assert!(use_color);
+
+            // Restore original env vars
+            if let Some(val) = original_no_color {
+                std::env::set_var("NO_COLOR", val);
+            } else {
+                std::env::remove_var("NO_COLOR");
+            }
+            if let Some(val) = original_term {
+                std::env::set_var("TERM", val);
+            } else {
+                std::env::remove_var("TERM");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_determine_use_color_priority() {
+        // Test that flags take precedence over env vars and TTY detection
+        let original_no_color = std::env::var("NO_COLOR").ok();
+        let original_term = std::env::var("TERM").ok();
+
+        unsafe {
+            // Test flag overrides everything
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("TERM");
+            let use_color = determine_use_color(true, false, true);
+            assert!(!use_color, "--no-color flag should override TTY detection");
+
+            // Test NO_COLOR env var overrides TTY
+            std::env::set_var("NO_COLOR", "1");
+            let use_color = determine_use_color(false, false, true);
+            assert!(!use_color, "NO_COLOR env should override TTY detection");
+
+            // Test TERM=dumb overrides TTY
+            std::env::remove_var("NO_COLOR");
+            std::env::set_var("TERM", "dumb");
+            let use_color = determine_use_color(false, false, true);
+            assert!(!use_color, "TERM=dumb should override TTY detection");
+
+            // Test force-color overrides everything
+            std::env::set_var("NO_COLOR", "1");
+            std::env::set_var("TERM", "dumb");
+            let use_color = determine_use_color(false, true, false);
+            assert!(use_color, "--force-color should override everything");
+
+            // Restore env vars
+            if let Some(val) = original_no_color {
+                std::env::set_var("NO_COLOR", val);
+            } else {
+                std::env::remove_var("NO_COLOR");
+            }
+            if let Some(val) = original_term {
+                std::env::set_var("TERM", val);
+            } else {
+                std::env::remove_var("TERM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_force_color_flag() {
+        use clap::Parser;
+
+        // Test force-color flag
+        let cli = Cli::try_parse_from(["linear", "--force-color", "issues"]).unwrap();
+        assert!(cli.force_color);
+        assert!(!cli.no_color);
+
+        // Test that force-color and no-color conflict
+        let result = Cli::try_parse_from(["linear", "--force-color", "--no-color", "issues"]);
+        assert!(result.is_err());
+
+        // Test no-color flag still works
+        let cli = Cli::try_parse_from(["linear", "--no-color", "issues"]).unwrap();
+        assert!(!cli.force_color);
+        assert!(cli.no_color);
+    }
+
+    #[test]
+    fn test_limit_validation() {
+        use clap::Parser;
+
+        // Test that limit must be at least 1
+        let result = Cli::try_parse_from(["linear", "issues", "--limit", "0"]);
+        assert!(result.is_err());
+
+        // Test that negative limits are rejected
+        let result = Cli::try_parse_from(["linear", "issues", "--limit=-5"]);
+        assert!(result.is_err());
+
+        // Test that valid limits work
+        let cli = Cli::try_parse_from(["linear", "issues", "--limit", "1"]).unwrap();
+        match cli.command {
+            Commands::Issues { limit, .. } => {
+                assert_eq!(limit, 1);
+            }
+            _ => panic!("Expected Issues command"),
         }
     }
 
