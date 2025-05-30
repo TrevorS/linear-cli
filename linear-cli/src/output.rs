@@ -657,6 +657,7 @@ impl OutputFormat for TableFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn create_test_issue(
         identifier: &str,
@@ -1140,6 +1141,7 @@ Final paragraph with normal text."#
     }
 
     #[test]
+    #[serial]
     fn test_osc8_terminal_detection() {
         // Test various terminal environments
 
@@ -1241,6 +1243,7 @@ Final paragraph with normal text."#
     }
 
     #[test]
+    #[serial]
     fn test_markdown_links_with_osc8() {
         let formatter = TableFormatter::new(true);
 
@@ -1279,6 +1282,7 @@ Final paragraph with normal text."#
     }
 
     #[test]
+    #[serial]
     fn test_view_in_linear_with_osc8() {
         let formatter = TableFormatter::new(true);
         let issue = create_test_detailed_issue();
@@ -1306,6 +1310,7 @@ Final paragraph with normal text."#
     }
 
     #[test]
+    #[serial]
     fn test_osc8_disabled_when_no_color() {
         let formatter = TableFormatter::new(false); // No color = no OSC-8
         let issue = create_test_detailed_issue();
@@ -1333,6 +1338,7 @@ Final paragraph with normal text."#
     }
 
     #[test]
+    #[serial]
     fn test_osc8_disabled_in_unsupported_terminal() {
         let formatter = TableFormatter::new(true);
         let issue = create_test_detailed_issue();

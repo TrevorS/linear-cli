@@ -11,12 +11,15 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
 
 jobs:
   test:
     name: Test - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
 
@@ -53,13 +56,21 @@ jobs:
       run: cargo clippy --workspace --all-targets -- -D warnings
 
     - name: Run tests
-      run: cargo test --workspace
+      run: cargo test --workspace --no-fail-fast
+      timeout-minutes: 10
+      env:
+        RUST_TEST_THREADS: 1
 
     - name: Run integration tests
       if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
       env:
         LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-      run: cargo test --workspace --features integration-tests -- --ignored
+      run: |
+        if [ -n "$LINEAR_API_KEY" ]; then
+          cargo test --workspace --features integration-tests -- --ignored
+        else
+          echo "Skipping integration tests - LINEAR_API_KEY not set"
+        fi
 
     - name: Build release
       run: cargo build --release --workspace
