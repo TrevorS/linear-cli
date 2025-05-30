@@ -6,7 +6,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
 use std::env;
-use std::io::IsTerminal;
 
 mod output;
 mod types;
@@ -340,7 +339,8 @@ async fn run_async_commands(cli: Cli, use_color: bool) -> Result<()> {
                         }
                     } else {
                         let formatter = TableFormatter::new(use_color);
-                        let is_interactive = std::io::stdout().is_terminal() && !raw;
+                        // Default to interactive for better UX, allow --raw to override
+                        let is_interactive = !raw;
                         match formatter.format_detailed_issue_rich(&issue, is_interactive) {
                             Ok(output) => output,
                             Err(e) => {

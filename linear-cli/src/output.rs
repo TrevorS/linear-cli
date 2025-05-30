@@ -119,21 +119,32 @@ impl TableFormatter {
 
     fn format_labels(&self, labels: &[linear_sdk::IssueLabel]) -> String {
         if labels.is_empty() {
-            return "None".to_string();
+            if self.use_color {
+                return "None".dimmed().to_string();
+            } else {
+                return "None".to_string();
+            }
         }
 
         labels
             .iter()
-            .map(|l| {
+            .enumerate()
+            .map(|(i, l)| {
                 if self.use_color {
-                    // For now, just use a simple colored format
-                    format!("{}", l.name.cyan())
+                    // Use different colors for visual variety
+                    let colored_name = match i % 4 {
+                        0 => l.name.cyan().to_string(),
+                        1 => l.name.purple().to_string(),
+                        2 => l.name.green().to_string(),
+                        _ => l.name.yellow().to_string(),
+                    };
+                    format!("●{}", colored_name.bold())
                 } else {
-                    l.name.clone()
+                    format!("● {}", l.name)
                 }
             })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("  ")
     }
 
     fn format_datetime(&self, datetime: &str) -> String {
@@ -151,38 +162,37 @@ impl TableFormatter {
         let mut current_text = String::new();
         let mut in_code_block = false;
         let mut is_heading = false;
+        let mut heading_level = None;
+        let mut in_link = false;
+        let mut current_link_url = String::new();
+        let mut in_strong = false;
+        let mut in_emphasis = false;
 
         for event in parser {
             match event {
                 Event::Start(Tag::Heading { level, .. }) => {
                     is_heading = true;
-                    match level {
-                        pulldown_cmark::HeadingLevel::H1 => {
-                            if self.use_color {
-                                write!(output, "\n{}", "".bold().underline())?;
-                            } else {
-                                writeln!(output)?;
-                            }
-                        }
-                        _ => {
-                            if self.use_color {
-                                write!(output, "\n{}", "".bold())?;
-                            } else {
-                                writeln!(output)?;
-                            }
-                        }
-                    }
+                    heading_level = Some(level);
+                    current_text.clear();
+                    writeln!(output)?; // Add newline before heading
                 }
                 Event::End(TagEnd::Heading(_)) => {
                     if is_heading {
-                        if self.use_color {
-                            write!(output, "{}", current_text.bold())?;
+                        let heading_text = if self.use_color {
+                            match heading_level {
+                                Some(pulldown_cmark::HeadingLevel::H1) => {
+                                    current_text.bold().underline().to_string()
+                                }
+                                _ => current_text.bold().to_string(),
+                            }
                         } else {
-                            write!(output, "{}", current_text)?;
-                        }
-                        writeln!(output)?;
+                            current_text.clone()
+                        };
+                        writeln!(output, "{}", heading_text)?;
+                        writeln!(output)?; // Add newline after heading
                         current_text.clear();
                         is_heading = false;
+                        heading_level = None;
                     }
                 }
                 Event::Start(Tag::CodeBlock(_)) => {
@@ -205,30 +215,50 @@ impl TableFormatter {
                     }
                 }
                 Event::Text(text) => {
-                    if in_code_block || is_heading {
+                    if in_code_block || in_link {
                         current_text.push_str(&text);
+                    } else if is_heading {
+                        // For headings, build formatted content in current_text
+                        if in_strong && self.use_color {
+                            current_text.push_str(&text.bold().to_string());
+                        } else if in_emphasis && self.use_color {
+                            current_text.push_str(&text.italic().to_string());
+                        } else {
+                            current_text.push_str(&text);
+                        }
+                    } else if in_strong && self.use_color {
+                        write!(output, "{}", text.bold())?;
+                    } else if in_emphasis && self.use_color {
+                        write!(output, "{}", text.italic())?;
                     } else {
                         write!(output, "{}", text)?;
                     }
                 }
                 Event::Code(code) => {
-                    if self.use_color {
+                    if is_heading {
+                        // For headings, append formatted code to current_text
+                        if self.use_color {
+                            current_text.push_str(&code.on_black().white().to_string());
+                        } else {
+                            current_text.push_str(&format!("`{}`", code));
+                        }
+                    } else if self.use_color {
                         write!(output, "{}", code.on_black().white())?;
                     } else {
                         write!(output, "`{}`", code)?;
                     }
                 }
                 Event::Start(Tag::Emphasis) => {
-                    // Don't output raw markdown for emphasis
+                    in_emphasis = true;
                 }
                 Event::End(TagEnd::Emphasis) => {
-                    // Don't output raw markdown for emphasis
+                    in_emphasis = false;
                 }
                 Event::Start(Tag::Strong) => {
-                    // Don't output raw markdown for strong
+                    in_strong = true;
                 }
                 Event::End(TagEnd::Strong) => {
-                    // Don't output raw markdown for strong
+                    in_strong = false;
                 }
                 Event::Start(Tag::List(_)) => {
                     writeln!(output)?;
@@ -258,14 +288,45 @@ impl TableFormatter {
                 Event::End(TagEnd::Paragraph) => {
                     writeln!(output)?;
                 }
-                Event::Start(Tag::Link { dest_url: _, .. }) => {
-                    // For links, we'll capture the text and not show raw markdown
+                Event::Start(Tag::Link { dest_url, .. }) => {
+                    // For links, we'll capture the text and check for media
+                    in_link = true;
+                    current_link_url = dest_url.to_string();
                     current_text.clear();
                 }
                 Event::End(TagEnd::Link) => {
-                    // Output just the link text, not the markdown syntax
-                    write!(output, "{}", current_text)?;
+                    // Check if this is a media link
+                    if current_link_url.contains("uploads.linear.app") {
+                        // This is embedded media - show with clickable URL
+                        if self.use_color {
+                            write!(
+                                output,
+                                "{}{}{}\n{}{}{}",
+                                "📎 ".white(),
+                                "Media: ".cyan().bold(),
+                                current_text.white(),
+                                "   ".dimmed(),
+                                "🔗 ".dimmed(),
+                                current_link_url.underline().blue()
+                            )?;
+                        } else {
+                            write!(
+                                output,
+                                "📎 Media: {}\n   🔗 {}",
+                                current_text, current_link_url
+                            )?;
+                        }
+                    } else {
+                        // Regular link - just show the link text with URL styling
+                        if self.use_color {
+                            write!(output, "{}", current_text.underline().cyan())?;
+                        } else {
+                            write!(output, "{}", current_text)?;
+                        }
+                    }
                     current_text.clear();
+                    current_link_url.clear();
+                    in_link = false;
                 }
                 Event::SoftBreak => {
                     write!(output, " ")?;
@@ -380,25 +441,56 @@ impl OutputFormat for TableFormatter {
 
         if let Some(description) = &issue.description {
             output.push(String::new());
-            output.push("Description:".to_string());
+            if self.use_color {
+                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
+            } else {
+                output.push("📝 Description:".to_string());
+            }
             output.push(description.clone());
         }
 
+        // Metadata section with enhanced formatting
         output.push(String::new());
-        output.push(format!("Labels: {}", self.format_labels(&issue.labels)));
+        if self.use_color {
+            output.push(format!(
+                "{}{}{}",
+                "🏷️ ".white(),
+                "Labels: ".cyan(),
+                self.format_labels(&issue.labels)
+            ));
+        } else {
+            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
+        }
 
         output.push(String::new());
-        output.push(format!(
-            "Created: {}",
-            self.format_datetime(&issue.created_at)
-        ));
-        output.push(format!(
-            "Updated: {}",
-            self.format_datetime(&issue.updated_at)
-        ));
+        if self.use_color {
+            output.push(format!(
+                "{}{} {}    {} {}",
+                "📅 ".white(),
+                "Created:".cyan(),
+                self.format_datetime(&issue.created_at).white(),
+                "Updated:".cyan(),
+                self.format_datetime(&issue.updated_at).white()
+            ));
+        } else {
+            output.push(format!(
+                "📅 Created: {}    Updated: {}",
+                self.format_datetime(&issue.created_at),
+                self.format_datetime(&issue.updated_at)
+            ));
+        }
 
         output.push(String::new());
-        output.push(format!("View in Linear: {}", issue.url));
+        if self.use_color {
+            output.push(format!(
+                "{}{}\n   {}",
+                "🔗 ".white(),
+                "View in Linear:".cyan(),
+                issue.url.underline().blue()
+            ));
+        } else {
+            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
+        }
 
         Ok(output.join("\n"))
     }
@@ -445,7 +537,11 @@ impl OutputFormat for TableFormatter {
         // Enhanced markdown rendering for description in interactive mode
         if let Some(description) = &issue.description {
             output.push(String::new());
-            output.push("Description:".to_string());
+            if self.use_color {
+                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
+            } else {
+                output.push("📝 Description:".to_string());
+            }
 
             // Render markdown to terminal if interactive
             match self.render_markdown_to_terminal(description) {
@@ -457,21 +553,48 @@ impl OutputFormat for TableFormatter {
             }
         }
 
+        // Metadata section with enhanced formatting
         output.push(String::new());
-        output.push(format!("Labels: {}", self.format_labels(&issue.labels)));
+        if self.use_color {
+            output.push(format!(
+                "{}{}{}",
+                "🏷️ ".white(),
+                "Labels: ".cyan(),
+                self.format_labels(&issue.labels)
+            ));
+        } else {
+            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
+        }
 
         output.push(String::new());
-        output.push(format!(
-            "Created: {}",
-            self.format_datetime(&issue.created_at)
-        ));
-        output.push(format!(
-            "Updated: {}",
-            self.format_datetime(&issue.updated_at)
-        ));
+        if self.use_color {
+            output.push(format!(
+                "{}{} {}    {} {}",
+                "📅 ".white(),
+                "Created:".cyan(),
+                self.format_datetime(&issue.created_at).white(),
+                "Updated:".cyan(),
+                self.format_datetime(&issue.updated_at).white()
+            ));
+        } else {
+            output.push(format!(
+                "📅 Created: {}    Updated: {}",
+                self.format_datetime(&issue.created_at),
+                self.format_datetime(&issue.updated_at)
+            ));
+        }
 
         output.push(String::new());
-        output.push(format!("View in Linear: {}", issue.url));
+        if self.use_color {
+            output.push(format!(
+                "{}{}\n   {}",
+                "🔗 ".white(),
+                "View in Linear:".cyan(),
+                issue.url.underline().blue()
+            ));
+        } else {
+            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
+        }
 
         Ok(output.join("\n"))
     }
@@ -762,10 +885,11 @@ mod tests {
         assert!(result.contains("Priority:   High"));
         assert!(result.contains("Description:"));
         assert!(result.contains("Users are experiencing race conditions"));
-        assert!(result.contains("Labels: bug, authentication"));
+        assert!(result.contains("🏷️ Labels: ● bug  ● authentication"));
         assert!(result.contains("Created:"));
         assert!(result.contains("Updated:"));
-        assert!(result.contains("View in Linear: https://linear.app/test/issue/ENG-123"));
+        assert!(result.contains("View in Linear:"));
+        assert!(result.contains("https://linear.app/test/issue/ENG-123"));
     }
 
     #[test]
