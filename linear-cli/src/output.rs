@@ -38,11 +38,23 @@ pub trait OutputFormat {
 
 pub struct TableFormatter {
     use_color: bool,
+    is_interactive: bool,
 }
 
 impl TableFormatter {
+    #[cfg(test)]
     pub fn new(use_color: bool) -> Self {
-        Self { use_color }
+        Self {
+            use_color,
+            is_interactive: use_color,
+        }
+    }
+
+    pub fn new_with_interactive(use_color: bool, is_interactive: bool) -> Self {
+        Self {
+            use_color,
+            is_interactive,
+        }
     }
 
     fn truncate_title(title: &str, max_len: usize) -> String {
@@ -534,7 +546,12 @@ impl OutputFormat for TableFormatter {
             .collect();
 
         let mut table = Table::new(rows);
-        table.with(Style::psql());
+        if self.is_interactive {
+            table.with(Style::psql());
+        } else {
+            // Use minimal style for piped output
+            table.with(Style::blank());
+        }
         Ok(table.to_string())
     }
 
