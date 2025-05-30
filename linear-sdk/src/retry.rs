@@ -67,12 +67,20 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| LinearError::Network("Retry failed".to_string())))
+    Err(last_error.unwrap_or_else(|| LinearError::Network {
+        message: "Retry failed".to_string(),
+        retryable: false,
+        source: Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Retry failed",
+        )),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
     use std::sync::{Arc, Mutex};
 
     #[tokio::test]
@@ -108,7 +116,14 @@ mod tests {
                 let mut c = count.lock().unwrap();
                 *c += 1;
                 if *c < 3 {
-                    Err(LinearError::Network("Temporary failure".to_string()))
+                    Err(LinearError::Network {
+                        message: "Temporary failure".to_string(),
+                        retryable: true,
+                        source: Box::new(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Temporary failure",
+                        )),
+                    })
                 } else {
                     Ok::<i32, LinearError>(42)
                 }
@@ -132,13 +147,16 @@ mod tests {
             async move {
                 let mut c = count.lock().unwrap();
                 *c += 1;
-                Err::<i32, LinearError>(LinearError::Auth)
+                Err::<i32, LinearError>(LinearError::Auth {
+                    reason: Cow::Borrowed("Test auth error"),
+                    source: None,
+                })
             }
         })
         .await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LinearError::Auth));
+        assert!(matches!(result.unwrap_err(), LinearError::Auth { .. }));
         assert_eq!(*call_count.lock().unwrap(), 1);
     }
 
@@ -156,7 +174,14 @@ mod tests {
             async move {
                 let mut c = count.lock().unwrap();
                 *c += 1;
-                Err::<i32, LinearError>(LinearError::Network("Always fail".to_string()))
+                Err::<i32, LinearError>(LinearError::Network {
+                    message: "Always fail".to_string(),
+                    retryable: true,
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Always fail",
+                    )),
+                })
             }
         })
         .await;
