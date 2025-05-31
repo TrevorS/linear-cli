@@ -5,11 +5,16 @@ use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::borrow::Cow;
 
+pub mod builder;
 pub mod constants;
 pub mod error;
 pub mod retry;
 
-use constants::{timeouts, urls};
+pub use builder::LinearClientConfig;
+use constants::urls;
+use secrecy::ExposeSecret;
+
+pub use builder::{Initial, LinearClientConfigBuilder, TypedLinearClientBuilder, WithAuth};
 
 #[cfg(feature = "oauth")]
 pub mod oauth;
@@ -131,6 +136,7 @@ pub struct LinearClient {
     _auth_token: String,
     verbose: bool,
     retry_config: retry::RetryConfig,
+    _max_retries: usize,
 }
 
 pub struct IssueFilters {
@@ -140,6 +146,47 @@ pub struct IssueFilters {
 }
 
 impl LinearClient {
+    pub fn from_config(config: LinearClientConfig) -> Result<Self> {
+        let auth_token = config.auth_token.expose_secret();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(auth_token).map_err(|_| LinearError::Auth {
+                reason: Cow::Borrowed("Invalid API key format"),
+                source: None,
+            })?,
+        );
+        headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
+
+        let mut client_builder = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(config.timeout);
+
+        if let Some(proxy) = config.proxy {
+            client_builder = client_builder.proxy(proxy);
+        }
+
+        let client = client_builder.build().map_err(LinearError::from)?;
+
+        let retry_config = retry::RetryConfig {
+            max_retries: config.max_retries as u32,
+            initial_delay: std::time::Duration::from_millis(100),
+            max_delay: std::time::Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+        };
+
+        Ok(Self {
+            client,
+            base_url: config
+                .base_url
+                .unwrap_or_else(|| urls::LINEAR_API_BASE.to_string()),
+            _auth_token: auth_token.to_string(),
+            verbose: config.verbose,
+            retry_config,
+            _max_retries: config.max_retries,
+        })
+    }
     async fn build_issue_filter(
         &self,
         filters: &IssueFilters,
@@ -399,61 +446,6 @@ impl LinearClient {
             }
         }
     }
-    pub fn new(api_key: String) -> Result<Self> {
-        Self::with_base_url(api_key, urls::LINEAR_API_BASE.to_string())
-    }
-
-    pub fn new_with_verbose(api_key: String, verbose: bool) -> Result<Self> {
-        Self::with_base_url_and_verbose(api_key, urls::LINEAR_API_BASE.to_string(), verbose)
-    }
-
-    pub fn with_base_url(api_key: String, base_url: String) -> Result<Self> {
-        Self::with_base_url_and_verbose(api_key, base_url, false)
-    }
-
-    pub fn with_base_url_and_verbose(
-        auth_token: String,
-        base_url: String,
-        verbose: bool,
-    ) -> Result<Self> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&auth_token).map_err(|_| LinearError::Auth {
-                reason: Cow::Borrowed("Invalid API key format"),
-                source: None,
-            })?,
-        );
-        headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
-
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .timeout(timeouts::HTTP_REQUEST_TIMEOUT)
-            .build()
-            .map_err(LinearError::from)?;
-
-        Ok(Self {
-            client,
-            base_url,
-            _auth_token: auth_token,
-            verbose,
-            retry_config: retry::RetryConfig::default(),
-        })
-    }
-
-    #[cfg(feature = "oauth")]
-    pub fn new_with_oauth_token(oauth_token: String) -> Result<Self> {
-        // OAuth tokens need "Bearer " prefix
-        let bearer_token = format!("Bearer {}", oauth_token);
-        Self::with_base_url_and_verbose(bearer_token, urls::LINEAR_API_BASE.to_string(), false)
-    }
-
-    #[cfg(feature = "oauth")]
-    pub fn new_with_oauth_token_and_verbose(oauth_token: String, verbose: bool) -> Result<Self> {
-        // OAuth tokens need "Bearer " prefix
-        let bearer_token = format!("Bearer {}", oauth_token);
-        Self::with_base_url_and_verbose(bearer_token, urls::LINEAR_API_BASE.to_string(), verbose)
-    }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {
         let request_body = Viewer::build_query(viewer::Variables {});
@@ -690,6 +682,7 @@ impl LinearClient {
 mod tests {
     use super::*;
     use crate::test_helpers::*;
+    use secrecy::SecretString;
 
     #[test]
     fn test_normalize_status() {
@@ -718,8 +711,13 @@ mod tests {
 
     #[test]
     fn test_linear_client_creation() {
-        let client = LinearClient::new("test_api_key".to_string());
-        assert!(client.is_ok());
+        let _client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .build()
+            .unwrap();
+        // Client creation succeeded if we reach this point without panicking
     }
 
     #[test]
@@ -739,7 +737,13 @@ mod tests {
             .with_body(mock_viewer_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.execute_viewer_query().await;
 
         mock.assert();
@@ -761,7 +765,13 @@ mod tests {
             .with_body(mock_error_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("invalid_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "invalid_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.execute_viewer_query().await;
 
         mock.assert();
@@ -780,7 +790,13 @@ mod tests {
             .with_body(mock_graphql_error_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.execute_viewer_query().await;
 
         mock.assert();
@@ -799,7 +815,13 @@ mod tests {
             .expect(4)  // 1 initial + 3 retries
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.execute_viewer_query().await;
 
         mock.assert();
@@ -812,7 +834,10 @@ mod tests {
         let api_key = std::env::var("LINEAR_API_KEY")
             .expect("LINEAR_API_KEY must be set for integration tests");
 
-        let client = LinearClient::new(api_key).expect("Failed to create client");
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(api_key))
+            .build()
+            .unwrap();
         let result = client.execute_viewer_query().await;
 
         assert!(result.is_ok(), "Query should succeed with valid API key");
@@ -839,7 +864,13 @@ mod tests {
             .with_body(mock_issues_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.list_issues(20).await;
 
         mock.assert();
@@ -880,7 +911,13 @@ mod tests {
             .with_body(mock_empty_issues_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.list_issues(20).await;
 
         mock.assert();
@@ -900,7 +937,13 @@ mod tests {
             .with_body(mock_graphql_error_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.list_issues(20).await;
 
         mock.assert();
@@ -915,7 +958,10 @@ mod tests {
         let api_key = std::env::var("LINEAR_API_KEY")
             .expect("LINEAR_API_KEY must be set for integration tests");
 
-        let client = LinearClient::new(api_key).expect("Failed to create client");
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(api_key))
+            .build()
+            .expect("Failed to create client");
         let result = client.list_issues(5).await;
 
         assert!(result.is_ok(), "Query should succeed with valid API key");
@@ -936,7 +982,13 @@ mod tests {
             .with_body(mock_viewer_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: Some("me".to_string()),
@@ -962,7 +1014,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_issue_filter_assignee_unassigned() {
-        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: Some("unassigned".to_string()),
@@ -982,7 +1039,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_issue_filter_status() {
-        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: None,
@@ -1006,7 +1068,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_issue_filter_team() {
-        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: None,
@@ -1041,7 +1108,13 @@ mod tests {
             .with_body(mock_viewer_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: Some("me".to_string()),
@@ -1082,7 +1155,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_issue_filter_empty() {
-        let client = LinearClient::new("test_api_key".to_string()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .build()
+            .unwrap();
 
         let filters = IssueFilters {
             assignee: None,
@@ -1114,7 +1192,13 @@ mod tests {
             .with_body(mock_detailed_issue_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.get_issue("ENG-123".to_string()).await;
 
         mock.assert();
@@ -1168,7 +1252,13 @@ mod tests {
             .with_body(mock_minimal_issue_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.get_issue("ENG-456".to_string()).await;
 
         mock.assert();
@@ -1195,7 +1285,13 @@ mod tests {
             .with_body(mock_graphql_error_response().to_string())
             .create();
 
-        let client = LinearClient::with_base_url("test_api_key".to_string(), server.url()).unwrap();
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
         let result = client.get_issue("INVALID".to_string()).await;
 
         mock.assert();
@@ -1210,7 +1306,10 @@ mod tests {
         let api_key = std::env::var("LINEAR_API_KEY")
             .expect("LINEAR_API_KEY must be set for integration tests");
 
-        let client = LinearClient::new(api_key).expect("Failed to create client");
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(api_key))
+            .build()
+            .expect("Failed to create client");
 
         // Try to get a specific issue - this will vary by team
         // In a real test, you'd use a known issue ID

@@ -157,7 +157,10 @@ Implement the smallest possible working Linear CLI that actually queries the API
    #[ignore] // Run with: cargo test -- --ignored
    fn test_real_api() {
        let api_key = std::env::var("LINEAR_API_KEY").unwrap();
-       let client = LinearClient::new(api_key);
+       let client = LinearClient::builder()
+           .auth_token(SecretString::new(api_key.into_boxed_str()))
+           .build()
+           .unwrap();
        let viewer = client.execute_viewer_query().unwrap();
        println!("Viewer: {:?}", viewer);
    }
