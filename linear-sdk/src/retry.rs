@@ -1,6 +1,7 @@
 // ABOUTME: Retry logic with exponential backoff for handling transient failures
 // ABOUTME: Implements retry mechanism for network errors and rate limits
 
+use crate::constants::retry;
 use crate::error::LinearError;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -15,10 +16,10 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: 3,
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(10),
-            backoff_multiplier: 2.0,
+            max_retries: retry::MAX_RETRIES,
+            initial_delay: retry::INITIAL_DELAY,
+            max_delay: retry::MAX_DELAY,
+            backoff_multiplier: retry::BACKOFF_MULTIPLIER,
         }
     }
 }

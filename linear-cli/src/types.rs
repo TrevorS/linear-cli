@@ -1,6 +1,7 @@
 // ABOUTME: Type definitions and enums for the Linear CLI
 // ABOUTME: Provides structured types for issue status and other domain models
 
+use crate::constants;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,11 +17,11 @@ pub enum IssueStatus {
 impl From<&str> for IssueStatus {
     fn from(s: &str) -> Self {
         match s {
-            "Todo" => IssueStatus::Todo,
-            "In Progress" => IssueStatus::InProgress,
-            "Done" => IssueStatus::Done,
-            "Backlog" => IssueStatus::Backlog,
-            "Canceled" => IssueStatus::Canceled,
+            constants::status::TODO => IssueStatus::Todo,
+            constants::status::IN_PROGRESS => IssueStatus::InProgress,
+            constants::status::DONE => IssueStatus::Done,
+            constants::status::BACKLOG => IssueStatus::Backlog,
+            constants::status::CANCELED => IssueStatus::Canceled,
             other => IssueStatus::Unknown(other.to_string()),
         }
     }
@@ -35,11 +36,11 @@ impl From<String> for IssueStatus {
 impl fmt::Display for IssueStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            IssueStatus::Todo => write!(f, "Todo"),
-            IssueStatus::InProgress => write!(f, "In Progress"),
-            IssueStatus::Done => write!(f, "Done"),
-            IssueStatus::Backlog => write!(f, "Backlog"),
-            IssueStatus::Canceled => write!(f, "Canceled"),
+            IssueStatus::Todo => write!(f, "{}", constants::status::TODO),
+            IssueStatus::InProgress => write!(f, "{}", constants::status::IN_PROGRESS),
+            IssueStatus::Done => write!(f, "{}", constants::status::DONE),
+            IssueStatus::Backlog => write!(f, "{}", constants::status::BACKLOG),
+            IssueStatus::Canceled => write!(f, "{}", constants::status::CANCELED),
             IssueStatus::Unknown(s) => write!(f, "{}", s),
         }
     }

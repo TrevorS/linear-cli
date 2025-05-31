@@ -5,8 +5,11 @@ use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::borrow::Cow;
 
+pub mod constants;
 pub mod error;
 pub mod retry;
+
+use constants::{timeouts, urls};
 
 #[cfg(feature = "oauth")]
 pub mod oauth;
@@ -397,11 +400,11 @@ impl LinearClient {
         }
     }
     pub fn new(api_key: String) -> Result<Self> {
-        Self::with_base_url(api_key, "https://api.linear.app".to_string())
+        Self::with_base_url(api_key, urls::LINEAR_API_BASE.to_string())
     }
 
     pub fn new_with_verbose(api_key: String, verbose: bool) -> Result<Self> {
-        Self::with_base_url_and_verbose(api_key, "https://api.linear.app".to_string(), verbose)
+        Self::with_base_url_and_verbose(api_key, urls::LINEAR_API_BASE.to_string(), verbose)
     }
 
     pub fn with_base_url(api_key: String, base_url: String) -> Result<Self> {
@@ -425,7 +428,7 @@ impl LinearClient {
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(timeouts::HTTP_REQUEST_TIMEOUT)
             .build()
             .map_err(LinearError::from)?;
 
@@ -442,14 +445,14 @@ impl LinearClient {
     pub fn new_with_oauth_token(oauth_token: String) -> Result<Self> {
         // OAuth tokens need "Bearer " prefix
         let bearer_token = format!("Bearer {}", oauth_token);
-        Self::with_base_url_and_verbose(bearer_token, "https://api.linear.app".to_string(), false)
+        Self::with_base_url_and_verbose(bearer_token, urls::LINEAR_API_BASE.to_string(), false)
     }
 
     #[cfg(feature = "oauth")]
     pub fn new_with_oauth_token_and_verbose(oauth_token: String, verbose: bool) -> Result<Self> {
         // OAuth tokens need "Bearer " prefix
         let bearer_token = format!("Bearer {}", oauth_token);
-        Self::with_base_url_and_verbose(bearer_token, "https://api.linear.app".to_string(), verbose)
+        Self::with_base_url_and_verbose(bearer_token, urls::LINEAR_API_BASE.to_string(), verbose)
     }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {

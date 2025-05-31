@@ -13,6 +13,7 @@ use syntect::util::as_24_bit_terminal_escaped;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
+use crate::constants;
 use crate::types::IssueStatus;
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -556,7 +557,7 @@ impl OutputFormat for TableFormatter {
     }
 
     fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String> {
-        let border_line = "─".repeat(50);
+        let border_line = "─".repeat(constants::ui::BORDER_LINE_LENGTH);
         let title_line = if self.use_color {
             format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
         } else {
@@ -652,7 +653,7 @@ impl OutputFormat for TableFormatter {
         }
 
         // For interactive terminals, render markdown if present in description
-        let border_line = "─".repeat(50);
+        let border_line = "─".repeat(constants::ui::BORDER_LINE_LENGTH);
         let title_line = if self.use_color {
             format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
         } else {
