@@ -4,11 +4,11 @@
 use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::borrow::Cow;
+use std::fmt::Debug;
 
 pub mod builder;
 pub mod constants;
 pub mod error;
-pub mod executor;
 pub mod graphql;
 pub mod retry;
 
@@ -17,7 +17,6 @@ use constants::urls;
 use secrecy::ExposeSecret;
 
 pub use builder::{Initial, LinearClientConfigBuilder, TypedLinearClientBuilder, WithAuth};
-pub use executor::LinearExecutor;
 pub use graphql::{GraphQLExecutor, QueryBuilder};
 
 #[cfg(feature = "oauth")]
@@ -144,7 +143,6 @@ pub struct LinearClient {
     pub(crate) verbose: bool,
     pub(crate) retry_config: retry::RetryConfig,
     _max_retries: usize,
-    executor: Option<std::sync::Arc<LinearExecutor>>,
 }
 
 pub struct IssueFilters {
@@ -193,53 +191,76 @@ impl LinearClient {
             verbose: config.verbose,
             retry_config,
             _max_retries: config.max_retries,
-            executor: None,
         })
     }
 
-    /// Enable GraphQL executor
-    ///
-    /// This enables the new GraphQL abstraction layer.
-    /// All GraphQL queries will be routed through the executor, providing:
-    /// - Consistent error handling and retry logic
-    /// - Future support for batched queries and tracing
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// use linear_sdk::LinearClient;
-    ///
-    /// let client = LinearClient::builder()
-    ///     .auth_token("your-api-key".into())
-    ///     .build()
-    ///     .unwrap()
-    ///     .with_graphql_executor();
-    /// ```
-    pub fn with_graphql_executor(mut self) -> Self {
-        let executor = LinearExecutor::new(self.clone_for_executor());
-        self.executor = Some(std::sync::Arc::new(executor));
-        self
-    }
+    /// Execute a GraphQL query using the abstraction layer
+    async fn execute_graphql<Q, V>(&self, variables: V) -> Result<Q::ResponseData>
+    where
+        Q: GraphQLQuery + Send + Sync,
+        Q::ResponseData: Debug + serde::de::DeserializeOwned + Send,
+        Q::Variables: Debug + Send + Sync + Clone,
+        V: Into<Q::Variables> + Send + Debug,
+    {
+        let variables = variables.into();
 
-    /// Disable GraphQL executor (use direct client calls)
-    ///
-    /// This disables the GraphQL abstraction layer and reverts to direct
-    /// HTTP client calls. This is the default behavior for backwards compatibility.
-    pub fn without_graphql_executor(mut self) -> Self {
-        self.executor = None;
-        self
-    }
+        // Build the query request
+        let request_body = Q::build_query(variables);
 
-    /// Helper method to clone client for executor (avoiding circular dependency)
-    fn clone_for_executor(&self) -> LinearClient {
-        Self {
-            client: self.client.clone(),
-            base_url: self.base_url.clone(),
-            _auth_token: self._auth_token.clone(),
-            verbose: self.verbose,
-            retry_config: self.retry_config.clone(),
-            _max_retries: self._max_retries,
-            executor: None, // Avoid circular dependency
+        if self.verbose {
+            let query_name = std::any::type_name::<Q>()
+                .split("::")
+                .last()
+                .unwrap_or("unknown");
+            eprintln!("Sending GraphQL query: {}", query_name);
+            eprintln!(
+                "Request body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
         }
+
+        // Execute using the client's retry logic
+        retry::retry_with_backoff(&self.retry_config, self.verbose, || {
+            let client = &self.client;
+            let base_url = &self.base_url;
+            let request_body = &request_body;
+            let verbose = self.verbose;
+
+            async move {
+                let start_time = std::time::Instant::now();
+                let response = client
+                    .post(format!("{}/graphql", base_url))
+                    .json(request_body)
+                    .send()
+                    .await
+                    .map_err(LinearError::from)?;
+
+                if verbose {
+                    eprintln!("Request completed in {:?}", start_time.elapsed());
+                    eprintln!("Response status: {}", response.status());
+                }
+
+                // Check for HTTP error status codes
+                if !response.status().is_success() {
+                    return Err(LinearError::from_status(
+                        http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
+                    ));
+                }
+
+                let response_body: Response<Q::ResponseData> =
+                    response.json().await.map_err(LinearError::from)?;
+
+                if let Some(errors) = response_body.errors {
+                    return Err(LinearError::GraphQL {
+                        message: format!("{:?}", errors),
+                        errors: vec![],
+                    });
+                }
+
+                response_body.data.ok_or(LinearError::InvalidResponse)
+            }
+        })
+        .await
     }
 
     async fn build_issue_filter(
@@ -503,63 +524,8 @@ impl LinearClient {
     }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {
-        // Use GraphQL executor if available
-        if let Some(executor) = &self.executor {
-            return executor.execute::<Viewer, _>(viewer::Variables {}).await;
-        }
-
-        // Fallback to direct client call for backwards compatibility
-        let request_body = Viewer::build_query(viewer::Variables {});
-
-        if self.verbose {
-            eprintln!("Sending GraphQL query: viewer");
-            eprintln!(
-                "Request body: {}",
-                serde_json::to_string_pretty(&request_body).unwrap_or_default()
-            );
-        }
-
-        retry::retry_with_backoff(&self.retry_config, self.verbose, || {
-            let client = &self.client;
-            let base_url = &self.base_url;
-            let request_body = &request_body;
-            let verbose = self.verbose;
-
-            async move {
-                let start_time = std::time::Instant::now();
-                let response = client
-                    .post(format!("{}/graphql", base_url))
-                    .json(request_body)
-                    .send()
-                    .await
-                    .map_err(LinearError::from)?;
-
-                if verbose {
-                    eprintln!("Request completed in {:?}", start_time.elapsed());
-                    eprintln!("Response status: {}", response.status());
-                }
-
-                // Check for HTTP error status codes
-                if !response.status().is_success() {
-                    return Err(LinearError::from_status(
-                        http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
-                    ));
-                }
-
-                let response_body: Response<viewer::ResponseData> =
-                    response.json().await.map_err(LinearError::from)?;
-
-                if let Some(errors) = response_body.errors {
-                    return Err(LinearError::GraphQL {
-                        message: format!("{:?}", errors),
-                        errors: vec![],
-                    });
-                }
-
-                response_body.data.ok_or(LinearError::InvalidResponse)
-            }
-        })
-        .await
+        self.execute_graphql::<Viewer, _>(viewer::Variables {})
+            .await
     }
 
     pub async fn list_issues(&self, limit: i32) -> Result<Vec<Issue>> {
@@ -590,70 +556,7 @@ impl LinearClient {
             filter,
         };
 
-        // Use GraphQL executor if available
-        if let Some(executor) = &self.executor {
-            let data = executor.execute::<ListIssues, _>(variables).await?;
-            let issues = data
-                .issues
-                .nodes
-                .into_iter()
-                .map(|issue| Issue {
-                    id: issue.id,
-                    identifier: issue.identifier,
-                    title: issue.title,
-                    status: issue.state.name,
-                    assignee: issue.assignee.as_ref().map(|a| a.name.clone()),
-                    assignee_id: issue.assignee.map(|a| a.id),
-                    team: Some(issue.team.key),
-                })
-                .collect();
-            return Ok(issues);
-        }
-
-        // Fallback to direct client call for backwards compatibility
-        let request_body = ListIssues::build_query(variables);
-
-        if self.verbose {
-            eprintln!("Sending GraphQL query: listIssues (limit: {})", limit);
-            eprintln!(
-                "Request body: {}",
-                serde_json::to_string_pretty(&request_body).unwrap_or_default()
-            );
-        }
-
-        let start_time = std::time::Instant::now();
-        let response = self
-            .client
-            .post(format!("{}/graphql", self.base_url))
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(LinearError::from)?;
-
-        if self.verbose {
-            eprintln!("Request completed in {:?}", start_time.elapsed());
-            eprintln!("Response status: {}", response.status());
-        }
-
-        // Check for HTTP error status codes
-        if !response.status().is_success() {
-            return Err(LinearError::from_status(
-                http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
-            ));
-        }
-
-        let response_body: Response<list_issues::ResponseData> =
-            response.json().await.map_err(LinearError::from)?;
-
-        if let Some(errors) = response_body.errors {
-            return Err(LinearError::GraphQL {
-                message: format!("{:?}", errors),
-                errors: vec![],
-            });
-        }
-
-        let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
-
+        let data = self.execute_graphql::<ListIssues, _>(variables).await?;
         let issues = data
             .issues
             .nodes
@@ -668,124 +571,32 @@ impl LinearClient {
                 team: Some(issue.team.key),
             })
             .collect();
-
         Ok(issues)
     }
 
     pub async fn get_issue(&self, id: String) -> Result<DetailedIssue> {
         let variables = get_issue::Variables { id: id.clone() };
 
-        // Use GraphQL executor if available
-        if let Some(executor) = &self.executor {
-            // Execute query through the GraphQL executor with error handling
-            let data = match executor.execute::<GetIssue, _>(variables).await {
-                Ok(data) => data,
-                Err(LinearError::GraphQL { message, .. }) => {
-                    // Check if this is a "not found" error
-                    if message.contains("not found") || message.contains("not exist") {
-                        return Err(LinearError::IssueNotFound {
-                            identifier: id,
-                            suggestion: None,
-                        });
-                    }
-                    return Err(LinearError::GraphQL {
-                        message,
-                        errors: vec![],
+        // Execute query through the GraphQL abstraction layer with error handling
+        let data = match self.execute_graphql::<GetIssue, _>(variables).await {
+            Ok(data) => data,
+            Err(LinearError::GraphQL { message, .. }) => {
+                // Check if this is a "not found" error
+                if message.contains("not found") || message.contains("not exist") {
+                    return Err(LinearError::IssueNotFound {
+                        identifier: id,
+                        suggestion: None,
                     });
                 }
-                Err(e) => return Err(e),
-            };
-
-            let issue = data.issue;
-            return Ok(DetailedIssue {
-                id: issue.id,
-                identifier: issue.identifier,
-                title: issue.title,
-                description: issue.description,
-                state: IssueState {
-                    name: issue.state.name,
-                    type_: issue.state.type_,
-                },
-                assignee: issue.assignee.map(|a| IssueAssignee {
-                    name: a.name,
-                    email: a.email,
-                }),
-                team: Some(IssueTeam {
-                    key: issue.team.key,
-                    name: issue.team.name,
-                }),
-                project: issue.project.map(|p| IssueProject { name: p.name }),
-                labels: issue
-                    .labels
-                    .nodes
-                    .into_iter()
-                    .map(|l| IssueLabel {
-                        name: l.name,
-                        color: l.color,
-                    })
-                    .collect(),
-                priority: Some(issue.priority as i64),
-                priority_label: Some(issue.priority_label),
-                created_at: issue.created_at,
-                updated_at: issue.updated_at,
-                url: issue.url,
-            });
-        }
-
-        // Fallback to direct client call for backwards compatibility
-        let request_body = GetIssue::build_query(variables);
-
-        if self.verbose {
-            eprintln!("Sending GraphQL query: getIssue (id: {})", id);
-            eprintln!(
-                "Request body: {}",
-                serde_json::to_string_pretty(&request_body).unwrap_or_default()
-            );
-        }
-
-        let start_time = std::time::Instant::now();
-        let response = self
-            .client
-            .post(format!("{}/graphql", self.base_url))
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(LinearError::from)?;
-
-        if self.verbose {
-            eprintln!("Request completed in {:?}", start_time.elapsed());
-            eprintln!("Response status: {}", response.status());
-        }
-
-        // Check for HTTP error status codes
-        if !response.status().is_success() {
-            return Err(LinearError::from_status(
-                http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
-            ));
-        }
-
-        let response_body: Response<get_issue::ResponseData> =
-            response.json().await.map_err(LinearError::from)?;
-
-        if let Some(errors) = response_body.errors {
-            // Check if this is a "not found" error
-            let error_string = format!("{:?}", errors);
-            if error_string.contains("not found") || error_string.contains("not exist") {
-                return Err(LinearError::IssueNotFound {
-                    identifier: id,
-                    suggestion: None,
+                return Err(LinearError::GraphQL {
+                    message,
+                    errors: vec![],
                 });
             }
-            return Err(LinearError::GraphQL {
-                message: error_string,
-                errors: vec![],
-            });
-        }
-
-        let data = response_body.data.ok_or(LinearError::InvalidResponse)?;
+            Err(e) => return Err(e),
+        };
 
         let issue = data.issue;
-
         Ok(DetailedIssue {
             id: issue.id,
             identifier: issue.identifier,
