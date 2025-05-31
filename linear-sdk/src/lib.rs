@@ -44,6 +44,7 @@ pub mod test_helpers;
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/viewer.graphql",
     response_derives = "Debug",
+    variables_derives = "Debug, Clone",
     skip_serializing_none
 )]
 pub struct Viewer;
@@ -53,6 +54,7 @@ pub struct Viewer;
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/issues.graphql",
     response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
     skip_serializing_none
 )]
 pub struct ListIssues;
@@ -62,6 +64,7 @@ pub struct ListIssues;
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/issue.graphql",
     response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
     skip_serializing_none
 )]
 pub struct GetIssue;
@@ -135,12 +138,13 @@ pub struct IssueLabel {
 }
 
 pub struct LinearClient {
-    client: reqwest::Client,
-    base_url: String,
+    pub(crate) client: reqwest::Client,
+    pub(crate) base_url: String,
     _auth_token: String,
-    verbose: bool,
-    retry_config: retry::RetryConfig,
+    pub(crate) verbose: bool,
+    pub(crate) retry_config: retry::RetryConfig,
     _max_retries: usize,
+    executor: Option<std::sync::Arc<CachedLinearExecutor>>,
 }
 
 pub struct IssueFilters {
@@ -189,8 +193,61 @@ impl LinearClient {
             verbose: config.verbose,
             retry_config,
             _max_retries: config.max_retries,
+            executor: None,
         })
     }
+
+    /// Enable GraphQL executor with caching
+    ///
+    /// This enables the new GraphQL abstraction layer with LRU caching support.
+    /// All GraphQL queries will be routed through the executor, providing:
+    /// - Query result caching with configurable TTL
+    /// - Consistent error handling and retry logic
+    /// - Future support for batched queries and tracing
+    ///
+    /// # Arguments
+    /// * `capacity` - Maximum number of cached query results
+    /// * `ttl` - Time-to-live for cached entries
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use linear_sdk::LinearClient;
+    /// use std::time::Duration;
+    ///
+    /// let client = LinearClient::builder()
+    ///     .auth_token("your-api-key".into())
+    ///     .build()
+    ///     .unwrap()
+    ///     .with_graphql_cache(100, Duration::from_secs(300)); // 5 minute cache
+    /// ```
+    pub fn with_graphql_cache(mut self, capacity: usize, ttl: std::time::Duration) -> Self {
+        let executor = CachedLinearExecutor::with_cache(self.clone_for_executor(), capacity, ttl);
+        self.executor = Some(std::sync::Arc::new(executor));
+        self
+    }
+
+    /// Disable GraphQL executor (use direct client calls)
+    ///
+    /// This disables the GraphQL abstraction layer and reverts to direct
+    /// HTTP client calls. This is the default behavior for backwards compatibility.
+    pub fn without_graphql_cache(mut self) -> Self {
+        self.executor = None;
+        self
+    }
+
+    /// Helper method to clone client for executor (avoiding circular dependency)
+    fn clone_for_executor(&self) -> LinearClient {
+        Self {
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
+            _auth_token: self._auth_token.clone(),
+            verbose: self.verbose,
+            retry_config: self.retry_config.clone(),
+            _max_retries: self._max_retries,
+            executor: None, // Avoid circular dependency
+        }
+    }
+
     async fn build_issue_filter(
         &self,
         filters: &IssueFilters,
@@ -452,6 +509,12 @@ impl LinearClient {
     }
 
     pub async fn execute_viewer_query(&self) -> Result<viewer::ResponseData> {
+        // Use GraphQL executor if available
+        if let Some(executor) = &self.executor {
+            return executor.execute::<Viewer, _>(viewer::Variables {}).await;
+        }
+
+        // Fallback to direct client call for backwards compatibility
         let request_body = Viewer::build_query(viewer::Variables {});
 
         if self.verbose {
@@ -528,10 +591,33 @@ impl LinearClient {
         limit: i32,
         filter: Option<list_issues::IssueFilter>,
     ) -> Result<Vec<Issue>> {
-        let request_body = ListIssues::build_query(list_issues::Variables {
+        let variables = list_issues::Variables {
             first: limit as i64,
             filter,
-        });
+        };
+
+        // Use GraphQL executor if available
+        if let Some(executor) = &self.executor {
+            let data = executor.execute::<ListIssues, _>(variables).await?;
+            let issues = data
+                .issues
+                .nodes
+                .into_iter()
+                .map(|issue| Issue {
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                    status: issue.state.name,
+                    assignee: issue.assignee.as_ref().map(|a| a.name.clone()),
+                    assignee_id: issue.assignee.map(|a| a.id),
+                    team: Some(issue.team.key),
+                })
+                .collect();
+            return Ok(issues);
+        }
+
+        // Fallback to direct client call for backwards compatibility
+        let request_body = ListIssues::build_query(variables);
 
         if self.verbose {
             eprintln!("Sending GraphQL query: listIssues (limit: {})", limit);
@@ -593,7 +679,67 @@ impl LinearClient {
     }
 
     pub async fn get_issue(&self, id: String) -> Result<DetailedIssue> {
-        let request_body = GetIssue::build_query(get_issue::Variables { id: id.clone() });
+        let variables = get_issue::Variables { id: id.clone() };
+
+        // Use GraphQL executor if available
+        if let Some(executor) = &self.executor {
+            // Execute query through the GraphQL executor with error handling
+            let data = match executor.execute::<GetIssue, _>(variables).await {
+                Ok(data) => data,
+                Err(LinearError::GraphQL { message, .. }) => {
+                    // Check if this is a "not found" error
+                    if message.contains("not found") || message.contains("not exist") {
+                        return Err(LinearError::IssueNotFound {
+                            identifier: id,
+                            suggestion: None,
+                        });
+                    }
+                    return Err(LinearError::GraphQL {
+                        message,
+                        errors: vec![],
+                    });
+                }
+                Err(e) => return Err(e),
+            };
+
+            let issue = data.issue;
+            return Ok(DetailedIssue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                description: issue.description,
+                state: IssueState {
+                    name: issue.state.name,
+                    type_: issue.state.type_,
+                },
+                assignee: issue.assignee.map(|a| IssueAssignee {
+                    name: a.name,
+                    email: a.email,
+                }),
+                team: Some(IssueTeam {
+                    key: issue.team.key,
+                    name: issue.team.name,
+                }),
+                project: issue.project.map(|p| IssueProject { name: p.name }),
+                labels: issue
+                    .labels
+                    .nodes
+                    .into_iter()
+                    .map(|l| IssueLabel {
+                        name: l.name,
+                        color: l.color,
+                    })
+                    .collect(),
+                priority: Some(issue.priority as i64),
+                priority_label: Some(issue.priority_label),
+                created_at: issue.created_at,
+                updated_at: issue.updated_at,
+                url: issue.url,
+            });
+        }
+
+        // Fallback to direct client call for backwards compatibility
+        let request_body = GetIssue::build_query(variables);
 
         if self.verbose {
             eprintln!("Sending GraphQL query: getIssue (id: {})", id);

@@ -20,8 +20,8 @@ pub trait GraphQLExecutor: Send + Sync {
     async fn execute<Q, V>(&self, variables: V) -> Result<Q::ResponseData, LinearError>
     where
         Q: GraphQLQuery + Send + Sync,
-        Q::ResponseData: Debug + serde::de::DeserializeOwned + serde::Serialize + Send,
-        Q::Variables: Debug + serde::Serialize + Send + Clone,
+        Q::ResponseData: Debug + serde::de::DeserializeOwned + Send,
+        Q::Variables: Debug + Send + Sync + Clone,
         V: Into<Q::Variables> + Send + Debug;
 
     /// Execute a batch of GraphQL queries
@@ -31,8 +31,8 @@ pub trait GraphQLExecutor: Send + Sync {
     ) -> Result<Vec<Q::ResponseData>, LinearError>
     where
         Q: GraphQLQuery + Send + Sync,
-        Q::ResponseData: Debug + serde::de::DeserializeOwned + serde::Serialize + Send,
-        Q::Variables: Debug + serde::Serialize + Send + Clone,
+        Q::ResponseData: Debug + serde::de::DeserializeOwned + Send,
+        Q::Variables: Debug + Send + Sync + Clone,
         V: Into<Q::Variables> + Send + Debug;
 }
 
@@ -130,7 +130,7 @@ impl QueryCache {
     fn cache_key<Q, V>(variables: &V) -> u64
     where
         Q: GraphQLQuery + Send + Sync,
-        V: Debug + serde::Serialize + Send + Clone,
+        V: Debug + Send + Clone,
     {
         let mut hasher = AHasher::default();
         // Use a combination of module path and operation name for stability
@@ -146,9 +146,9 @@ impl QueryCache {
             query_type // fallback to full type name
         };
         operation_name.hash(&mut hasher);
-        if let Ok(var_bytes) = serde_json::to_vec(variables) {
-            var_bytes.hash(&mut hasher);
-        }
+        // Use Debug representation for cache key (less efficient but avoids serde requirement)
+        let var_debug = format!("{:?}", variables);
+        var_debug.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -156,7 +156,7 @@ impl QueryCache {
     pub fn get<Q, V>(&self, variables: &V) -> Option<serde_json::Value>
     where
         Q: GraphQLQuery + Send + Sync,
-        V: Debug + serde::Serialize + Send + Clone,
+        V: Debug + Send + Clone,
     {
         let key = Self::cache_key::<Q, V>(variables);
         let mut cache = self.cache.write();
@@ -175,7 +175,7 @@ impl QueryCache {
     pub fn set<Q, V>(&self, variables: &V, data: serde_json::Value)
     where
         Q: GraphQLQuery + Send + Sync,
-        V: Debug + serde::Serialize + Send + Clone,
+        V: Debug + Send + Clone,
     {
         let key = Self::cache_key::<Q, V>(variables);
         let entry = CachedEntry::new(data);

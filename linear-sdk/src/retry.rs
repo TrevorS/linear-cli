@@ -6,6 +6,7 @@ use crate::error::LinearError;
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[derive(Clone)]
 pub struct RetryConfig {
     pub max_retries: u32,
     pub initial_delay: Duration,
