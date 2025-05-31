@@ -8,6 +8,8 @@ use std::borrow::Cow;
 pub mod builder;
 pub mod constants;
 pub mod error;
+pub mod executor;
+pub mod graphql;
 pub mod retry;
 
 pub use builder::LinearClientConfig;
@@ -15,6 +17,8 @@ use constants::urls;
 use secrecy::ExposeSecret;
 
 pub use builder::{Initial, LinearClientConfigBuilder, TypedLinearClientBuilder, WithAuth};
+pub use executor::CachedLinearExecutor;
+pub use graphql::{GraphQLExecutor, QueryBuilder, QueryCache, QueryExtensions};
 
 #[cfg(feature = "oauth")]
 pub mod oauth;
