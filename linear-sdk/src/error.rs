@@ -1,6 +1,7 @@
 // ABOUTME: Custom error types for Linear SDK with user-friendly messages
 // ABOUTME: Provides specific error handling for different Linear API failure modes
 
+use crate::constants::errors;
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
@@ -148,7 +149,7 @@ impl LinearError {
             },
             408 => LinearError::Timeout,
             429 => LinearError::RateLimit { reset_seconds: 0 },
-            500..=599 => LinearError::Network {
+            errors::SERVER_ERROR_MIN..=errors::SERVER_ERROR_MAX => LinearError::Network {
                 message: format!("Server error: {}", status),
                 retryable: true,
                 source: Box::new(std::io::Error::new(

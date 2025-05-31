@@ -31,7 +31,7 @@ echo "✅ uv found"
 # Install pre-commit
 echo "📋 Setting up pre-commit hooks..."
 uv tool install pre-commit
-pre-commit install
+uv tool run pre-commit install
 echo "✅ Pre-commit hooks installed"
 
 # Setup environment file if it doesn't exist

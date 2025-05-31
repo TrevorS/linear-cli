@@ -8,6 +8,7 @@ use owo_colors::OwoColorize;
 use std::env;
 use std::io::IsTerminal;
 
+mod constants;
 mod output;
 mod types;
 
@@ -37,7 +38,9 @@ fn create_spinner(message: &str, is_interactive: bool) -> Option<ProgressBar> {
             .unwrap(),
     );
     pb.set_message(message.to_string());
-    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb.enable_steady_tick(std::time::Duration::from_millis(
+        constants::timeouts::PROGRESS_BAR_TICK_MS,
+    ));
     Some(pb)
 }
 

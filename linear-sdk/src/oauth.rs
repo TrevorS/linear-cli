@@ -2,7 +2,7 @@
 // ABOUTME: Handles browser-based OAuth with PKCE, token storage in system keychain
 
 #[cfg(feature = "oauth")]
-use crate::{Result, storage};
+use crate::{Result, constants::urls, storage};
 #[cfg(feature = "oauth")]
 use std::borrow::Cow;
 
@@ -60,9 +60,9 @@ impl OAuthManager {
         }
 
         // These URLs come from Linear's OAuth config
-        let auth_url = AuthUrl::new("https://linear.app/oauth/authorize".to_string())
+        let auth_url = AuthUrl::new(urls::LINEAR_OAUTH_AUTHORIZE.to_string())
             .map_err(|_| crate::LinearError::OAuthConfig)?;
-        let token_url = TokenUrl::new("https://api.linear.app/oauth/token".to_string())
+        let token_url = TokenUrl::new(urls::LINEAR_OAUTH_TOKEN.to_string())
             .map_err(|_| crate::LinearError::OAuthConfig)?;
 
         let client = BasicClient::new(ClientId::new(client_id))
@@ -70,7 +70,7 @@ impl OAuthManager {
             .set_auth_uri(auth_url)
             .set_token_uri(token_url)
             .set_redirect_uri(
-                RedirectUrl::new(format!("http://localhost:{REDIRECT_PORT}{REDIRECT_PATH}"))
+                RedirectUrl::new(format!("{base}:{REDIRECT_PORT}{REDIRECT_PATH}", base = urls::OAUTH_CALLBACK_BASE))
                     .map_err(|_| crate::LinearError::OAuthConfig)?,
             );
 
