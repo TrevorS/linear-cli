@@ -5,11 +5,16 @@ use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::borrow::Cow;
 
+pub mod builder;
 pub mod constants;
 pub mod error;
 pub mod retry;
 
+pub use builder::LinearClientConfig;
 use constants::{timeouts, urls};
+use secrecy::ExposeSecret;
+
+pub use builder::{Initial, LinearClientConfigBuilder, TypedLinearClientBuilder, WithAuth};
 
 #[cfg(feature = "oauth")]
 pub mod oauth;
@@ -131,6 +136,7 @@ pub struct LinearClient {
     _auth_token: String,
     verbose: bool,
     retry_config: retry::RetryConfig,
+    _max_retries: usize,
 }
 
 pub struct IssueFilters {
@@ -140,6 +146,45 @@ pub struct IssueFilters {
 }
 
 impl LinearClient {
+    pub fn from_config(config: LinearClientConfig) -> Result<Self> {
+        let auth_token = config.auth_token.expose_secret().clone();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth_token).map_err(|_| LinearError::Auth {
+                reason: Cow::Borrowed("Invalid API key format"),
+                source: None,
+            })?,
+        );
+        headers.insert(USER_AGENT, HeaderValue::from_static("linear-cli/0.1.0"));
+
+        let mut client_builder = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(config.timeout);
+
+        if let Some(proxy) = config.proxy {
+            client_builder = client_builder.proxy(proxy);
+        }
+
+        let client = client_builder.build().map_err(LinearError::from)?;
+
+        let retry_config = retry::RetryConfig {
+            max_retries: config.max_retries as u32,
+            initial_delay: std::time::Duration::from_millis(100),
+            max_delay: std::time::Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+        };
+
+        Ok(Self {
+            client,
+            base_url: urls::LINEAR_API_BASE.to_string(),
+            _auth_token: auth_token,
+            verbose: config.verbose,
+            retry_config,
+            _max_retries: config.max_retries,
+        })
+    }
     async fn build_issue_filter(
         &self,
         filters: &IssueFilters,
@@ -438,6 +483,7 @@ impl LinearClient {
             _auth_token: auth_token,
             verbose,
             retry_config: retry::RetryConfig::default(),
+            _max_retries: 3,
         })
     }
 

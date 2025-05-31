@@ -31,6 +31,7 @@ pub enum LinearError {
     InvalidResponse,
     Timeout,
     OAuthConfig,
+    Configuration(String),
 }
 
 impl fmt::Display for LinearError {
@@ -49,6 +50,7 @@ impl fmt::Display for LinearError {
             LinearError::InvalidResponse => write!(f, "Invalid API response format"),
             LinearError::Timeout => write!(f, "Timeout: Request took too long to complete"),
             LinearError::OAuthConfig => write!(f, "OAuth configuration error"),
+            LinearError::Configuration(msg) => write!(f, "Configuration error: {}", msg),
         }
     }
 }
