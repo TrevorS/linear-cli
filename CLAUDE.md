@@ -6,74 +6,105 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Linear CLI is a command-line interface for Linear (issue tracking/project management tool) built in Rust. The project provides fast issue browsing and management directly from the terminal with beautiful table formatting and color-coded output.
 
-## Build and Development Commands
+The CLI is fully functional and includes:
+- Issue listing with filters (assignee, status, team, labels)
+- Interactive OAuth authentication with keychain storage
+- Beautiful table output with color coding
+- TTY detection for automatic color/formatting adjustments
+- Enhanced error handling with retry logic
+- Comprehensive test coverage with snapshot testing
 
+## Essential Commands
+
+**Start here**: `make help` shows all available commands organized by category.
+
+### Quick Workflows
 ```bash
-# Build the project
-cargo build
-
-# Run tests
-cargo test --workspace
-
-# Run snapshot tests with review
-cargo insta test --review
-
-# Run the CLI
-cargo run -p linear-cli
-
-# Run with specific arguments
-cargo run -p linear-cli -- [args]
-
-# Example: List issues without color
-cargo run -p linear-cli -- --no-color issues
-
-# Development Note: API Key vs OAuth
-# For development, using the API key (from .env file) is recommended over OAuth
-# to avoid repeated macOS keychain permission dialogs when rebuilding binaries.
-# The .env file contains LINEAR_API_KEY which is automatically loaded.
-
-# Build release version
-cargo build --release --workspace
-
-# Check code without building
-cargo check --workspace
-
-# Format code
-cargo fmt --all
-
-# Run linter
-cargo clippy --workspace --all-targets -- -D warnings
-
-# Set up pre-commit hooks
-uv tool install pre-commit
-pre-commit install
-
-# Download Linear GraphQL schema
-cargo run -p xtask -- schema --api-key YOUR_API_KEY
+make dev            # Quick development check (fmt, lint, test)
+make all            # Full workflow (fmt, lint, test, build)
+make dev-setup      # Complete development environment setup
 ```
+
+### Testing & Debugging
+```bash
+make test           # Run all tests
+make test-snapshots # Run tests with snapshot review
+make test-debug     # Run tests with debug output
+make run            # Run CLI with example command
+make run-debug      # Run CLI with debug logging
+make run-piped      # Test CLI output when piped (no TTY)
+```
+
+### Code Quality
+```bash
+make fmt            # Format code
+make lint           # Run clippy with strict warnings
+make check          # CI-style format and lint checks
+```
+
+### Advanced
+```bash
+make debug-deps     # Show dependency tree and check for issues
+cargo run -p xtask -- schema --api-key YOUR_API_KEY  # Update GraphQL schema
+```
+
+## Development Notes
+
+### First Time Setup
+1. Run `make dev-setup` for complete environment setup
+2. Copy `.env.example` to `.env` and add your Linear API key
+3. VS Code users get automatic configuration and extension recommendations
+
+### Authentication
+- **For development**: Use API key (LINEAR_API_KEY in .env) to avoid macOS keychain dialogs
+- **For users**: OAuth flow with keychain storage for secure token management
+- API key takes precedence over OAuth if both are available
+
+### Cargo Aliases
+The project includes helpful cargo aliases (`.cargo/config.toml`):
+```bash
+cargo c          # check --workspace
+cargo t          # test --workspace
+cargo f          # fmt --all
+cargo l          # clippy --workspace --all-targets -- -D warnings
+cargo r -- args  # run -p linear-cli -- args
+cargo tsnap      # insta test --review
+cargo dtree      # tree --workspace
+cargo deps       # outdated (if installed)
+cargo sec        # audit (if installed)
+```
+
+### Testing Philosophy
+- **Unit tests**: Core SDK functionality, authentication, error handling
+- **Integration tests**: Mocked API responses using mockito
+- **Snapshot tests**: Terminal output formatting verification with insta
+- **Error scenarios**: Network failures, API errors, retry logic
+- Always use `make test-snapshots` when changing output formatting
 
 ## Architecture
 
 The project is structured as a Cargo workspace with:
-- `linear-cli/`: Main CLI binary crate
-- `linear-sdk/`: Reusable Linear API client library
-- `xtask/`: Build automation and schema management
+- `linear-cli/`: Main CLI binary crate with commands and output formatting
+- `linear-sdk/`: Reusable Linear API client library with authentication and retry logic
+- `xtask/`: Build automation and schema management tools
 
-### Key Implementation Phases (from docs/plan.md):
-1. **Phase 0**: Initial setup and validation spike
-2. **Phase 1**: Core SDK functionality (authentication, basic queries)
-3. **Phase 2**: CLI functionality (commands, formatting)
-4. **Phase 3**: Advanced features (bulk operations, search)
-5. **Phase 4**: Polish (shell completions, homebrew formula)
+### Current Implementation Status:
+- ✅ **Core SDK**: Authentication (OAuth + API key), GraphQL queries, error handling, retry logic
+- ✅ **CLI Commands**: Issue listing with comprehensive filtering options
+- ✅ **Output Formatting**: Beautiful tables with color coding and TTY detection
+- ✅ **Error Handling**: Enhanced error messages with retry and user guidance
+- 🚧 **Advanced Features**: Bulk operations, advanced search (future work)
+- 🚧 **Polish**: Shell completions, homebrew formula (future work)
 
 ### Technology Stack:
 - **Async Runtime**: tokio
-- **HTTP Client**: reqwest
-- **CLI Parsing**: clap (with derive macros)
-- **GraphQL**: graphql_client with code generation
-- **Error Handling**: anyhow
-- **Terminal UI**: tabled (with ansi feature), owo-colors
-- **Snapshot Testing**: insta
+- **HTTP Client**: reqwest with custom retry implementation
+- **CLI Parsing**: clap (derive macros)
+- **GraphQL**: graphql_client with build-time code generation
+- **Error Handling**: anyhow with custom error types and native retry logic
+- **Terminal UI**: tabled (ansi feature), owo-colors with TTY detection
+- **Testing**: insta for snapshots, mockito for mocked HTTP responses
+- **Authentication**: OAuth with keychain storage, API key fallback
 
 ## Linear API Integration
 
@@ -100,32 +131,36 @@ To use OAuth authentication:
 - **Error Format**: Standard GraphQL errors array with extensions
 - **API URL**: `https://api.linear.app/graphql`
 
-## Testing Strategy
+## Snapshot Testing
 
-- Unit tests for SDK components
-- Integration tests with mocked API responses (using mockito)
-- End-to-end tests against Linear's API (behind feature flag)
-- Snapshot tests for terminal output formatting (using insta)
-- Test coverage for all major functionality
-
-### Snapshot Testing
-
-When working with output formatting, use snapshot tests:
+Critical for output formatting changes:
 ```bash
-# Run snapshot tests
-cargo insta test
-
-# Review and accept snapshot changes
-cargo insta review
-
-# Accept all pending snapshots
-cargo insta accept
+make test-snapshots       # Run tests with snapshot review (recommended)
+cargo insta test          # Run snapshot tests only
+cargo insta review        # Review pending changes
+cargo insta accept        # Accept all pending snapshots
 ```
 
-Note: The pre-commit hook excludes `.snap` files from trailing whitespace checks to preserve exact output formatting.
+**Important**: Always review snapshot changes carefully. The pre-commit hook excludes `.snap` files from trailing whitespace checks to preserve exact output formatting.
+
+## Debugging Guide
+
+### Common Issues & Solutions
+- **macOS Keychain Dialogs**: Use `LINEAR_API_KEY` in .env during development
+- **TTY Detection**: Test both `make run` and `make run-piped` for output formatting
+- **Snapshot Mismatches**: Use `make test-snapshots` to review and accept changes
+- **Dependency Issues**: Use `make debug-deps` to check for problems and security advisories
+
+### Quick Debug Commands
+```bash
+make run-debug      # Run CLI with debug logging
+make test-debug     # Run tests with debug output
+make check          # Quick code quality check
+```
 
 ## Important Project Documentation
 
 - `docs/specs.md`: Complete project specification with user stories and technical requirements
-- `docs/plan.md`: Detailed 18-prompt implementation roadmap
-- GraphQL schema will be stored in `linear-sdk/schema/` (when implemented)
+- `docs/plan.md`: Detailed implementation roadmap and decisions
+- `linear-api-spike/`: API validation findings and examples
+- `linear-sdk/graphql/schema.json`: Current GraphQL schema from Linear
