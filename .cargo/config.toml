@@ -1,0 +1,39 @@
+# ABOUTME: Cargo configuration for improved developer experience
+# ABOUTME: Provides useful aliases and build settings for faster workflows
+
+[alias]
+# Quick development aliases (complement the Makefile)
+c = "check --workspace"
+t = "test --workspace"
+b = "build --workspace"
+r = "run -p linear-cli --"
+f = "fmt --all"
+l = "clippy --workspace --all-targets -- -D warnings"
+
+# Testing aliases
+tsnap = "insta test --review"
+tint = "test --workspace --features integration-tests -- --ignored"
+tdebug = "test --workspace -- --nocapture"
+
+# Build aliases
+brel = "build --release --workspace"
+br = "build --release --workspace"
+
+# Tree and dependencies
+dtree = "tree --workspace"
+deps = "outdated"
+sec = "audit"
+
+[build]
+# Use all available cores for compilation (0 = auto-detect)
+# Note: Some versions require explicit core count
+# jobs = 0
+
+[profile.dev]
+# Faster linking for development builds
+split-debuginfo = "unpacked"
+
+[profile.release]
+# Enable link-time optimization for smaller binaries
+lto = true
+codegen-units = 1

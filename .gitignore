@@ -2,9 +2,11 @@
 /target/
 **/*.rs.bk
 
+# Rust-analyzer files
+rust-project.json
+
 # IDE files
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -19,3 +21,14 @@ Thumbs.db
 
 # Debug files
 *.pdb
+
+# Test artifacts
+*.profraw
+
+# Backup files
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+*.temp

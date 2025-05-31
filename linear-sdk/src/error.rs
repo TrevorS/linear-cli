@@ -72,10 +72,7 @@ pub struct GraphQLError {
 }
 
 #[derive(Default)]
-pub struct ErrorRecovery {
-    #[allow(dead_code)]
-    backoff: backoff::ExponentialBackoff,
-}
+pub struct ErrorRecovery {}
 
 impl ErrorRecovery {
     pub fn should_retry(&self, error: &LinearError) -> bool {

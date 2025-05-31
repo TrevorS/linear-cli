@@ -1,0 +1,7 @@
+# ABOUTME: Rust toolchain configuration to ensure consistent builds
+# ABOUTME: Pins the Rust version for all developers and CI
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-src"]
+targets = ["x86_64-apple-darwin", "aarch64-apple-darwin"]
