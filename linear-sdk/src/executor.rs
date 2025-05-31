@@ -1,54 +1,28 @@
 // ABOUTME: Default implementation of GraphQLExecutor trait for LinearClient
-// ABOUTME: Provides batched query execution and caching functionality
+// ABOUTME: Provides batched query execution functionality without caching
 
 use async_trait::async_trait;
 use graphql_client::GraphQLQuery;
 use std::fmt::Debug;
-use std::sync::Arc;
-use std::time::Duration;
 
 use crate::error::LinearError;
-use crate::graphql::{GraphQLExecutor, QueryCache};
+use crate::graphql::GraphQLExecutor;
 use crate::{LinearClient, Result};
 
-/// Implementation of GraphQLExecutor for LinearClient with caching support
-pub struct CachedLinearExecutor {
+/// Implementation of GraphQLExecutor for LinearClient
+pub struct LinearExecutor {
     client: LinearClient,
-    cache: Option<Arc<QueryCache>>,
 }
 
-impl CachedLinearExecutor {
-    /// Create a new cached executor
+impl LinearExecutor {
+    /// Create a new executor
     pub fn new(client: LinearClient) -> Self {
-        Self {
-            client,
-            cache: None,
-        }
-    }
-
-    /// Create a new cached executor with cache
-    pub fn with_cache(client: LinearClient, capacity: usize, ttl: Duration) -> Self {
-        Self {
-            client,
-            cache: Some(Arc::new(QueryCache::new(capacity, ttl))),
-        }
-    }
-
-    /// Get cache statistics if caching is enabled
-    pub fn cache_stats(&self) -> Option<crate::graphql::CacheStats> {
-        self.cache.as_ref().map(|cache| cache.stats())
-    }
-
-    /// Clear the cache if caching is enabled
-    pub fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.clear();
-        }
+        Self { client }
     }
 }
 
 #[async_trait]
-impl GraphQLExecutor for CachedLinearExecutor {
+impl GraphQLExecutor for LinearExecutor {
     async fn execute<Q, V>(&self, variables: V) -> Result<Q::ResponseData>
     where
         Q: GraphQLQuery + Send + Sync,
@@ -57,11 +31,6 @@ impl GraphQLExecutor for CachedLinearExecutor {
         V: Into<Q::Variables> + Send + Debug,
     {
         let variables = variables.into();
-
-        // Note: Caching temporarily disabled due to serialization constraints
-        // TODO: Re-enable caching with proper Serialize derives once conflicts are resolved
-
-        // Execute the query using the underlying client
         self.execute_query::<Q>(variables).await
     }
 
@@ -88,7 +57,7 @@ impl GraphQLExecutor for CachedLinearExecutor {
     }
 }
 
-impl CachedLinearExecutor {
+impl LinearExecutor {
     /// Execute a single GraphQL query (internal implementation)
     /// Supports all Linear GraphQL query types with proper query routing
     async fn execute_query<Q>(&self, variables: Q::Variables) -> Result<Q::ResponseData>
@@ -163,10 +132,9 @@ impl CachedLinearExecutor {
 mod tests {
     use super::*;
     use secrecy::SecretString;
-    use std::time::Duration;
 
     #[tokio::test]
-    async fn test_cached_executor_creation() {
+    async fn test_executor_creation() {
         let client = LinearClient::builder()
             .auth_token(SecretString::new(
                 "test_api_key".to_string().into_boxed_str(),
@@ -174,23 +142,12 @@ mod tests {
             .build()
             .unwrap();
 
-        let executor = CachedLinearExecutor::new(client);
-        assert!(executor.cache.is_none());
-
-        let client2 = LinearClient::builder()
-            .auth_token(SecretString::new(
-                "test_api_key".to_string().into_boxed_str(),
-            ))
-            .build()
-            .unwrap();
-
-        let executor_with_cache =
-            CachedLinearExecutor::with_cache(client2, 100, Duration::from_secs(60));
-        assert!(executor_with_cache.cache.is_some());
+        let executor = LinearExecutor::new(client);
+        assert!(!std::ptr::addr_of!(executor).is_null());
     }
 
     #[tokio::test]
-    async fn test_cache_stats() {
+    async fn test_executor_integration() {
         let client = LinearClient::builder()
             .auth_token(SecretString::new(
                 "test_api_key".to_string().into_boxed_str(),
@@ -198,47 +155,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let executor = CachedLinearExecutor::with_cache(client, 10, Duration::from_secs(60));
+        let executor = LinearExecutor::new(client);
 
-        let stats = executor.cache_stats().unwrap();
-        assert_eq!(stats.capacity, 10);
-        assert_eq!(stats.size, 0);
-    }
-
-    #[tokio::test]
-    async fn test_clear_cache() {
-        let client = LinearClient::builder()
-            .auth_token(SecretString::new(
-                "test_api_key".to_string().into_boxed_str(),
-            ))
-            .build()
-            .unwrap();
-
-        let executor = CachedLinearExecutor::with_cache(client, 10, Duration::from_secs(60));
-
-        executor.clear_cache();
-        let stats = executor.cache_stats().unwrap();
-        assert_eq!(stats.size, 0);
-    }
-
-    #[tokio::test]
-    async fn test_enhanced_executor_integration() {
-        let client = LinearClient::builder()
-            .auth_token(SecretString::new(
-                "test_api_key".to_string().into_boxed_str(),
-            ))
-            .build()
-            .unwrap();
-
-        let executor = CachedLinearExecutor::with_cache(client, 10, Duration::from_secs(60));
-
-        // Test that the GraphQL executor supports the new enhanced query routing
-        // This verifies that all query types are supported by the enhanced implementation
-
-        assert!(executor.cache.is_some());
-        let stats = executor.cache_stats().unwrap();
-        assert_eq!(stats.capacity, 10);
-        assert_eq!(stats.size, 0);
+        // Test that the GraphQL executor supports all query types
+        assert!(!std::ptr::addr_of!(executor).is_null());
     }
 
     #[tokio::test]
@@ -250,7 +170,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let executor = CachedLinearExecutor::new(client);
+        let executor = LinearExecutor::new(client);
 
         // Test that the batch execute method is available on the trait
         assert!(!std::ptr::addr_of!(executor).is_null());

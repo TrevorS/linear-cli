@@ -17,8 +17,8 @@ use constants::urls;
 use secrecy::ExposeSecret;
 
 pub use builder::{Initial, LinearClientConfigBuilder, TypedLinearClientBuilder, WithAuth};
-pub use executor::CachedLinearExecutor;
-pub use graphql::{GraphQLExecutor, QueryBuilder, QueryCache, QueryExtensions};
+pub use executor::LinearExecutor;
+pub use graphql::{GraphQLExecutor, QueryBuilder};
 
 #[cfg(feature = "oauth")]
 pub mod oauth;
@@ -144,7 +144,7 @@ pub struct LinearClient {
     pub(crate) verbose: bool,
     pub(crate) retry_config: retry::RetryConfig,
     _max_retries: usize,
-    executor: Option<std::sync::Arc<CachedLinearExecutor>>,
+    executor: Option<std::sync::Arc<LinearExecutor>>,
 }
 
 pub struct IssueFilters {
@@ -197,31 +197,25 @@ impl LinearClient {
         })
     }
 
-    /// Enable GraphQL executor with caching
+    /// Enable GraphQL executor
     ///
-    /// This enables the new GraphQL abstraction layer with LRU caching support.
+    /// This enables the new GraphQL abstraction layer.
     /// All GraphQL queries will be routed through the executor, providing:
-    /// - Query result caching with configurable TTL
     /// - Consistent error handling and retry logic
     /// - Future support for batched queries and tracing
-    ///
-    /// # Arguments
-    /// * `capacity` - Maximum number of cached query results
-    /// * `ttl` - Time-to-live for cached entries
     ///
     /// # Example
     /// ```rust,no_run
     /// use linear_sdk::LinearClient;
-    /// use std::time::Duration;
     ///
     /// let client = LinearClient::builder()
     ///     .auth_token("your-api-key".into())
     ///     .build()
     ///     .unwrap()
-    ///     .with_graphql_cache(100, Duration::from_secs(300)); // 5 minute cache
+    ///     .with_graphql_executor();
     /// ```
-    pub fn with_graphql_cache(mut self, capacity: usize, ttl: std::time::Duration) -> Self {
-        let executor = CachedLinearExecutor::with_cache(self.clone_for_executor(), capacity, ttl);
+    pub fn with_graphql_executor(mut self) -> Self {
+        let executor = LinearExecutor::new(self.clone_for_executor());
         self.executor = Some(std::sync::Arc::new(executor));
         self
     }
@@ -230,7 +224,7 @@ impl LinearClient {
     ///
     /// This disables the GraphQL abstraction layer and reverts to direct
     /// HTTP client calls. This is the default behavior for backwards compatibility.
-    pub fn without_graphql_cache(mut self) -> Self {
+    pub fn without_graphql_executor(mut self) -> Self {
         self.executor = None;
         self
     }

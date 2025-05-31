@@ -24,9 +24,6 @@ secrecy = "0.10.2"
 # GraphQL abstraction layer dependencies
 async-trait = "0.1"
 tracing = "0.1"
-lru = "0.12"
-parking_lot = "0.12"
-ahash = "0.8"
 
 # OAuth dependencies (optional)
 oauth2 = { version = "5.0.0", default-features = false, features = ["reqwest-blocking"], optional = true }
