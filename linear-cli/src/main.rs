@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
+use secrecy::SecretString;
 use std::env;
 use std::io::IsTerminal;
 
@@ -265,19 +266,27 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
 
     let client = if is_oauth_token {
         #[cfg(feature = "oauth")]
-        match LinearClient::new_with_oauth_token_and_verbose(auth_token, cli.verbose) {
-            Ok(client) => {
-                if let Some(s) = spinner {
-                    s.finish_and_clear();
+        {
+            // OAuth tokens need "Bearer " prefix
+            let bearer_token = format!("Bearer {}", auth_token);
+            match LinearClient::builder()
+                .auth_token(SecretString::new(bearer_token.into_boxed_str()))
+                .verbose(cli.verbose)
+                .build()
+            {
+                Ok(client) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    client
                 }
-                client
-            }
-            Err(e) => {
-                if let Some(s) = spinner {
-                    s.finish_and_clear();
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
                 }
-                display_error(&e, use_color);
-                std::process::exit(1);
             }
         }
         #[cfg(not(feature = "oauth"))]
@@ -286,7 +295,11 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
             unreachable!()
         }
     } else {
-        match LinearClient::new_with_verbose(auth_token, cli.verbose) {
+        match LinearClient::builder()
+            .auth_token(SecretString::new(auth_token.into_boxed_str()))
+            .verbose(cli.verbose)
+            .build()
+        {
             Ok(client) => {
                 if let Some(s) = spinner {
                     s.finish_and_clear();
