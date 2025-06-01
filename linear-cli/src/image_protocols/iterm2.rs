@@ -40,7 +40,7 @@ impl ImageProtocol for ITerm2Protocol {
             "image/jpeg",
             "image/gif",
             "image/tiff",
-            "image/bmp"
+            "image/bmp",
         ]
     }
 }
@@ -123,10 +123,7 @@ mod tests {
             "image.gif"
         );
 
-        assert_eq!(
-            extract_filename_from_url("https://example.com/"),
-            "image"
-        );
+        assert_eq!(extract_filename_from_url("https://example.com/"), "image");
 
         assert_eq!(
             extract_filename_from_url("https://example.com/no-extension"),
@@ -166,7 +163,8 @@ mod tests {
         let protocol = ITerm2Protocol;
         let test_data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]; // PNG signature
 
-        let result = protocol.render_image(&test_data, "test image", "https://example.com/test.png");
+        let result =
+            protocol.render_image(&test_data, "test image", "https://example.com/test.png");
         assert!(result.is_ok());
 
         let output = result.unwrap();

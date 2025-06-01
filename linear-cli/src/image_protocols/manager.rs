@@ -3,8 +3,7 @@
 
 use crate::image_protocols::{
     ImageCache, ImageDownloader, ImageProtocol, ImageUrlValidator, TerminalCapabilities,
-    kitty::KittyProtocol,
-    iterm2::ITerm2Protocol,
+    iterm2::ITerm2Protocol, kitty::KittyProtocol,
 };
 use anyhow::{Result, anyhow};
 

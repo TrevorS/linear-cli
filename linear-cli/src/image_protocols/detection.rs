@@ -73,7 +73,10 @@ impl TerminalCapabilities {
                 terminal_name,
             },
             _ => {
-                eprintln!("Warning: Unknown protocol '{}' in LINEAR_CLI_FORCE_PROTOCOL. Valid values: kitty, iterm2, sixel, none", protocol);
+                eprintln!(
+                    "Warning: Unknown protocol '{}' in LINEAR_CLI_FORCE_PROTOCOL. Valid values: kitty, iterm2, sixel, none",
+                    protocol
+                );
                 Self::detect_without_override()
             }
         }
@@ -155,13 +158,14 @@ fn detect_iterm2_support(term_program: &str, term: &str) -> bool {
     }
 
     // Terminals that support iTerm2 protocol
-    if matches!(term_program,
+    if matches!(
+        term_program,
         "WezTerm" |     // WezTerm supports both Kitty and iTerm2
         "mintty" |      // Windows terminal
         "Hyper" |       // Electron-based terminal
         "Warp" |        // Modern terminal with iTerm2 support
         "Tabby" |       // Cross-platform terminal
-        "Terminus"      // Another modern terminal
+        "Terminus" // Another modern terminal
     ) {
         return true;
     }
