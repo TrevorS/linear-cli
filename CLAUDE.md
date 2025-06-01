@@ -33,6 +33,10 @@ make test-debug     # Run tests with debug output
 make run            # Run CLI with example command
 make run-debug      # Run CLI with debug logging
 make run-piped      # Test CLI output when piped (no TTY)
+
+# Inline images testing
+cargo test --features inline-images    # Test with image support
+cargo run --features inline-images -p linear-cli -- issue [ID] --force-images
 ```
 
 ### Code Quality
@@ -59,6 +63,15 @@ cargo run -p xtask -- schema --api-key YOUR_API_KEY  # Update GraphQL schema
 - **For development**: Use API key (LINEAR_API_KEY in .env) to avoid macOS keychain dialogs
 - **For users**: OAuth flow with keychain storage for secure token management
 - API key takes precedence over OAuth if both are available
+
+### Inline Images (Optional Feature)
+The `inline-images` feature enables displaying images from Linear issues directly in compatible terminals:
+- **Supported terminals**: Kitty (primary), Ghostty, WezTerm
+- **Automatic detection**: Enabled automatically in supported terminals
+- **Manual control**: Use `--force-images` or `--no-images` flags
+- **Fallback**: Gracefully falls back to clickable links in unsupported terminals
+- **Security**: Only processes images from allowed domains (uploads.linear.app by default)
+- **Caching**: Downloaded images are cached locally for performance
 
 ### Cargo Aliases
 The project includes helpful cargo aliases (`.cargo/config.toml`):

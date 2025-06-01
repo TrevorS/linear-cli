@@ -16,6 +16,9 @@ use tabled::{Table, Tabled};
 use crate::constants;
 use crate::types::IssueStatus;
 
+#[cfg(feature = "inline-images")]
+use crate::image_protocols::{ImageManager, ImageRenderResult};
+
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 
@@ -482,6 +485,145 @@ impl TableFormatter {
         }
 
         Ok(output)
+    }
+
+    #[cfg(feature = "inline-images")]
+    pub async fn format_detailed_issue_with_image_manager_async(
+        &self,
+        issue: &DetailedIssue,
+        is_interactive: bool,
+        image_manager: &ImageManager,
+    ) -> Result<String> {
+        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+            eprintln!("Processing issue with image manager...");
+        }
+
+        // Process images BEFORE markdown rendering to avoid conflicts
+        let mut processed_issue = issue.clone();
+
+        if let Some(description) = &issue.description {
+            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                eprintln!("Found description, processing for images...");
+                eprintln!("Description contains {} characters", description.len());
+                eprintln!(
+                    "Description preview: {}",
+                    &description[..std::cmp::min(100, description.len())]
+                );
+            }
+
+            // Process markdown images asynchronously BEFORE rendering
+            let processed_description = self
+                .process_markdown_images(description, image_manager)
+                .await?;
+
+            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                eprintln!(
+                    "Processed description contains {} characters",
+                    processed_description.len()
+                );
+                eprintln!(
+                    "Original != Processed: {}",
+                    processed_description != *description
+                );
+            }
+
+            // Update the issue with processed description if it was modified
+            if processed_description != *description {
+                processed_issue.description = Some(processed_description);
+
+                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                    eprintln!("Updated issue description with processed images");
+                }
+            }
+        } else {
+            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                eprintln!("No description found in issue");
+            }
+        }
+
+        // Now render the issue with processed description
+        let output = self.format_detailed_issue_rich(&processed_issue, is_interactive)?;
+
+        Ok(output)
+    }
+
+    #[cfg(feature = "inline-images")]
+    async fn process_markdown_images(
+        &self,
+        markdown: &str,
+        image_manager: &ImageManager,
+    ) -> Result<String> {
+        use regex::Regex;
+
+        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+            eprintln!("Processing markdown for images...");
+        }
+
+        // Find and replace image patterns in the raw markdown
+        let mut result = markdown.to_string();
+        let mut image_count = 0;
+
+        // Use regex to find image patterns
+        let image_regex = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
+        let mut images_to_process = Vec::new();
+
+        for captures in image_regex.captures_iter(markdown) {
+            let full_match = captures.get(0).map_or("", |m| m.as_str());
+            let alt_text = captures.get(1).map_or("", |m| m.as_str());
+            let url = captures.get(2).map_or("", |m| m.as_str());
+            image_count += 1;
+
+            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                eprintln!("Found image #{}: {} (alt: {})", image_count, url, alt_text);
+                eprintln!("Full pattern: {}", full_match);
+                eprintln!("Can process URL: {}", image_manager.can_process_url(url));
+            }
+
+            if image_manager.can_process_url(url) {
+                images_to_process.push((
+                    url.to_string(),
+                    alt_text.to_string(),
+                    full_match.to_string(),
+                ));
+            }
+        }
+
+        // Process each image and replace in the raw markdown
+        for (url, alt_text, original_pattern) in images_to_process {
+            match image_manager.process_image(&url, &alt_text).await {
+                ImageRenderResult::Rendered(escape_sequence) => {
+                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                        eprintln!(
+                            "Image rendered successfully: {} chars",
+                            escape_sequence.len()
+                        );
+                    }
+
+                    // Replace the markdown pattern with raw escape sequence
+                    // The markdown renderer will output this as-is
+                    result = result.replace(&original_pattern, &escape_sequence);
+
+                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                        eprintln!("Replaced markdown pattern with Kitty sequence");
+                    }
+                }
+                ImageRenderResult::Fallback(fallback) => {
+                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                        eprintln!("Image fallback: {}", fallback);
+                    }
+                    // Replace with fallback text
+                    result = result.replace(&original_pattern, &fallback);
+                }
+                ImageRenderResult::Disabled => {
+                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                        eprintln!("Image manager disabled");
+                    }
+                    // Keep original markdown
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -1200,8 +1342,7 @@ Final paragraph with normal text."#
         let formatter = TableFormatter::new(true);
         let issue = create_markdown_test_issue();
 
-        // TODO: This test will fail until we implement markdown parsing
-        // When implemented, this should render rich formatted output
+        // Test rich markdown formatting in interactive mode
         let result = formatter.format_detailed_issue_rich(&issue, true).unwrap();
 
         // Test that headers are properly formatted (will fail initially)
@@ -1523,7 +1664,7 @@ Test with:
 
         let formatter = TableFormatter::new(true);
 
-        // TODO: This will fail until markdown rendering is implemented
+        // Test markdown formatting with edge cases
         let result = formatter
             .format_detailed_issue_rich(&edge_case_issue, true)
             .unwrap();

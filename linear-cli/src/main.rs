@@ -13,6 +13,9 @@ mod constants;
 mod output;
 mod types;
 
+#[cfg(feature = "inline-images")]
+mod image_protocols;
+
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
 fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool) -> bool {
@@ -119,6 +122,16 @@ enum Commands {
         /// Force raw markdown output (skip rich formatting)
         #[arg(long)]
         raw: bool,
+
+        /// Disable inline image display (requires inline-images feature)
+        #[cfg(feature = "inline-images")]
+        #[arg(long)]
+        no_images: bool,
+
+        /// Force inline image display even in unsupported terminals (requires inline-images feature)
+        #[cfg(feature = "inline-images")]
+        #[arg(long, conflicts_with = "no_images")]
+        force_images: bool,
     },
     /// Check connection to Linear
     Status {
@@ -139,6 +152,441 @@ enum Commands {
     /// Logout and clear stored credentials (requires oauth feature)
     #[cfg(feature = "oauth")]
     Logout,
+    /// Manage image cache and diagnostics (requires inline-images feature)
+    #[cfg(feature = "inline-images")]
+    Images {
+        #[command(subcommand)]
+        action: ImageAction,
+    },
+}
+
+#[cfg(feature = "inline-images")]
+#[derive(Subcommand)]
+enum ImageAction {
+    /// Clear the image cache
+    Clear,
+    /// Show cache statistics and information
+    Stats,
+    /// Test image protocol support for current terminal
+    Test {
+        /// Test URL to use (optional, uses a small test image if not provided)
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// Show detailed diagnostics about image capabilities
+    Diagnostics,
+}
+
+#[cfg(feature = "inline-images")]
+async fn handle_images_command(
+    action: ImageAction,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    use crate::image_protocols::{ImageManager, TerminalCapabilities};
+
+    match action {
+        ImageAction::Clear => {
+            let spinner = create_spinner("Clearing image cache...", is_interactive);
+
+            match ImageManager::new() {
+                Ok(manager) => match manager.clear_cache().await {
+                    Ok(_) => {
+                        if let Some(s) = spinner {
+                            s.finish_and_clear();
+                        }
+                        if use_color {
+                            println!("{} Image cache cleared successfully!", "✓".green());
+                        } else {
+                            println!("✓ Image cache cleared successfully!");
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(s) = spinner {
+                            s.finish_and_clear();
+                        }
+                        if use_color {
+                            eprintln!("{} Failed to clear cache: {}", "✗".red(), e);
+                        } else {
+                            eprintln!("✗ Failed to clear cache: {}", e);
+                        }
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    if use_color {
+                        eprintln!("{} Failed to initialize image manager: {}", "✗".red(), e);
+                    } else {
+                        eprintln!("✗ Failed to initialize image manager: {}", e);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ImageAction::Stats => {
+            let spinner = create_spinner("Gathering cache statistics...", is_interactive);
+
+            match ImageManager::new() {
+                Ok(manager) => {
+                    match manager.cache_stats().await {
+                        Ok(stats) => {
+                            if let Some(s) = spinner {
+                                s.finish_and_clear();
+                            }
+                            if use_color {
+                                println!("{} Image Cache Statistics", "📊".blue());
+                            } else {
+                                println!("📊 Image Cache Statistics");
+                            }
+                            println!();
+                            println!("{}", stats);
+
+                            // Show terminal capabilities
+                            let caps = manager.capabilities();
+                            println!();
+                            if use_color {
+                                println!("{} Terminal Capabilities", "🖥️".cyan());
+                            } else {
+                                println!("🖥️ Terminal Capabilities");
+                            }
+                            println!("Terminal: {}", caps.terminal_name);
+                            println!(
+                                "Kitty Protocol: {}",
+                                if caps.supports_kitty_images {
+                                    "✓"
+                                } else {
+                                    "✗"
+                                }
+                            );
+                            println!(
+                                "iTerm2 Protocol: {}",
+                                if caps.supports_iterm2_images {
+                                    "✓"
+                                } else {
+                                    "✗"
+                                }
+                            );
+                            println!(
+                                "Sixel Protocol: {}",
+                                if caps.supports_sixel { "✓" } else { "✗" }
+                            );
+                            println!(
+                                "Image Support: {}",
+                                if caps.supports_inline_images() {
+                                    "✓ Enabled"
+                                } else {
+                                    "✗ Disabled"
+                                }
+                            );
+
+                            if let Some(protocol) = caps.preferred_protocol() {
+                                println!("Preferred Protocol: {}", protocol);
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(s) = spinner {
+                                s.finish_and_clear();
+                            }
+                            if use_color {
+                                eprintln!("{} Failed to get cache stats: {}", "✗".red(), e);
+                            } else {
+                                eprintln!("✗ Failed to get cache stats: {}", e);
+                            }
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    if use_color {
+                        eprintln!("{} Failed to initialize image manager: {}", "✗".red(), e);
+                    } else {
+                        eprintln!("✗ Failed to initialize image manager: {}", e);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ImageAction::Test { url } => {
+            let test_url = url.unwrap_or_else(|| {
+                // Use a small test PNG (1x1 pixel)
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()
+            });
+
+            let spinner = create_spinner("Testing image protocol support...", is_interactive);
+
+            match ImageManager::new() {
+                Ok(manager) => {
+                    if !manager.is_enabled() {
+                        if let Some(s) = spinner {
+                            s.finish_and_clear();
+                        }
+                        if use_color {
+                            println!(
+                                "{} Image support is disabled in this terminal",
+                                "ℹ".yellow()
+                            );
+                        } else {
+                            println!("ℹ Image support is disabled in this terminal");
+                        }
+                        println!();
+
+                        let caps = manager.capabilities();
+                        println!("Terminal: {}", caps.terminal_name);
+                        println!("Detected support: None");
+                        println!();
+                        println!(
+                            "Try setting LINEAR_CLI_FORCE_PROTOCOL=kitty or LINEAR_CLI_FORCE_PROTOCOL=iterm2 to test protocols manually."
+                        );
+                        return Ok(());
+                    }
+
+                    let result = manager.process_image(&test_url, "Test image").await;
+
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+
+                    match result {
+                        crate::image_protocols::ImageRenderResult::Rendered(output) => {
+                            if use_color {
+                                println!("{} Image protocol test successful!", "✓".green());
+                            } else {
+                                println!("✓ Image protocol test successful!");
+                            }
+                            println!();
+                            println!("Terminal: {}", manager.capabilities().terminal_name);
+                            println!(
+                                "Protocol: {}",
+                                manager
+                                    .capabilities()
+                                    .preferred_protocol()
+                                    .unwrap_or("unknown")
+                            );
+
+                            if test_url.starts_with("data:") {
+                                println!();
+                                println!("Test image rendered below:");
+                                println!("{}", output);
+                            } else {
+                                println!();
+                                println!("Downloaded and rendered image from: {}", test_url);
+                                println!("{}", output);
+                            }
+                        }
+                        crate::image_protocols::ImageRenderResult::Fallback(link) => {
+                            if use_color {
+                                println!(
+                                    "{} Image protocol not supported, falling back to link",
+                                    "ℹ".yellow()
+                                );
+                            } else {
+                                println!("ℹ Image protocol not supported, falling back to link");
+                            }
+                            println!();
+                            println!("Fallback output: {}", link);
+                        }
+                        crate::image_protocols::ImageRenderResult::Disabled => {
+                            if use_color {
+                                println!("{} Image processing is disabled", "ℹ".yellow());
+                            } else {
+                                println!("ℹ Image processing is disabled");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    if use_color {
+                        eprintln!("{} Failed to test image protocol: {}", "✗".red(), e);
+                    } else {
+                        eprintln!("✗ Failed to test image protocol: {}", e);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ImageAction::Diagnostics => {
+            if use_color {
+                println!("{} Linear CLI Image Diagnostics", "🔍".magenta());
+            } else {
+                println!("🔍 Linear CLI Image Diagnostics");
+            }
+            println!();
+
+            // Terminal Detection
+            let caps = TerminalCapabilities::detect();
+            println!("=== Terminal Detection ===");
+            println!("Terminal Name: {}", caps.terminal_name);
+            println!(
+                "TERM_PROGRAM: {}",
+                std::env::var("TERM_PROGRAM").unwrap_or("(not set)".to_string())
+            );
+            println!(
+                "TERM: {}",
+                std::env::var("TERM").unwrap_or("(not set)".to_string())
+            );
+            println!(
+                "KITTY_WINDOW_ID: {}",
+                std::env::var("KITTY_WINDOW_ID").unwrap_or("(not set)".to_string())
+            );
+            println!(
+                "WEZTERM_EXECUTABLE: {}",
+                std::env::var("WEZTERM_EXECUTABLE").unwrap_or("(not set)".to_string())
+            );
+            println!();
+
+            // Protocol Support
+            println!("=== Protocol Support ===");
+            println!(
+                "Kitty Graphics: {} {}",
+                if caps.supports_kitty_images {
+                    "✓"
+                } else {
+                    "✗"
+                },
+                if caps.supports_kitty_images {
+                    "(Supported)"
+                } else {
+                    "(Not supported)"
+                }
+            );
+            println!(
+                "iTerm2 Inline: {} {}",
+                if caps.supports_iterm2_images {
+                    "✓"
+                } else {
+                    "✗"
+                },
+                if caps.supports_iterm2_images {
+                    "(Supported)"
+                } else {
+                    "(Not supported)"
+                }
+            );
+            println!(
+                "Sixel Graphics: {} {}",
+                if caps.supports_sixel { "✓" } else { "✗" },
+                if caps.supports_sixel {
+                    "(Supported)"
+                } else {
+                    "(Not supported)"
+                }
+            );
+            println!();
+
+            if caps.supports_inline_images() {
+                println!(
+                    "Preferred Protocol: {}",
+                    caps.preferred_protocol().unwrap_or("none")
+                );
+            } else {
+                println!("No image protocols supported in this terminal");
+            }
+            println!();
+
+            // Environment Variables
+            println!("=== Configuration ===");
+            println!(
+                "LINEAR_CLI_FORCE_PROTOCOL: {}",
+                std::env::var("LINEAR_CLI_FORCE_PROTOCOL").unwrap_or("(not set)".to_string())
+            );
+            println!(
+                "LINEAR_CLI_ALLOWED_IMAGE_DOMAINS: {}",
+                std::env::var("LINEAR_CLI_ALLOWED_IMAGE_DOMAINS")
+                    .unwrap_or("uploads.linear.app (default)".to_string())
+            );
+            println!(
+                "LINEAR_CLI_MAX_IMAGE_SIZE: {}",
+                std::env::var("LINEAR_CLI_MAX_IMAGE_SIZE").unwrap_or("10MB (default)".to_string())
+            );
+            println!(
+                "LINEAR_CLI_VERBOSE: {}",
+                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            println!(
+                "LINEAR_CLI_QUIET: {}",
+                if std::env::var("LINEAR_CLI_QUIET").is_ok() {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
+            println!();
+
+            // Image Manager Status
+            match ImageManager::new() {
+                Ok(manager) => {
+                    println!("=== Image Manager Status ===");
+                    println!(
+                        "Manager Enabled: {}",
+                        if manager.is_enabled() {
+                            "✓ Yes"
+                        } else {
+                            "✗ No"
+                        }
+                    );
+
+                    if let Ok(stats) = manager.cache_stats().await {
+                        println!("Cache: {}", stats);
+                    } else {
+                        println!("Cache: Error reading cache information");
+                    }
+
+                    // Terminal dimensions (if available)
+                    if let Ok(scaler) = crate::image_protocols::scaling::ImageScaler::new() {
+                        if let Some(dims) = scaler.get_terminal_dimensions() {
+                            println!("Terminal Size: {}x{} characters", dims.width, dims.height);
+                            println!(
+                                "Estimated Pixel Size: {}x{} pixels",
+                                dims.width * dims.char_width,
+                                dims.height * dims.char_height
+                            );
+                        } else {
+                            println!("Terminal Size: Could not detect");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("=== Image Manager Status ===");
+                    println!("Manager: ✗ Failed to initialize ({})", e);
+                }
+            }
+
+            println!();
+            println!("=== Recommendations ===");
+            if !caps.supports_inline_images() {
+                println!("• This terminal does not support inline images");
+                println!("• Try using iTerm2, Kitty, WezTerm, or Ghostty for image support");
+                println!("• You can override detection with: LINEAR_CLI_FORCE_PROTOCOL=kitty");
+            } else {
+                println!("• Image support is available in this terminal");
+                println!("• Use 'linear images test' to verify functionality");
+            }
+
+            if std::env::var("LINEAR_CLI_VERBOSE").is_err() {
+                println!(
+                    "• Enable verbose mode with LINEAR_CLI_VERBOSE=1 for detailed processing info"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -146,12 +594,9 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Determine if color should be used
-    let use_color = determine_use_color(
-        cli.no_color,
-        cli.force_color,
-        std::io::stdout().is_terminal(),
-    );
+    // Determine if color should be used and if we're interactive
+    let is_interactive = std::io::stdout().is_terminal();
+    let use_color = determine_use_color(cli.no_color, cli.force_color, is_interactive);
 
     // Handle OAuth commands first (synchronous commands)
     match &cli.command {
@@ -225,16 +670,17 @@ fn main() -> Result<()> {
         _ => {
             // Continue with async commands
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async move { run_async_commands(cli, use_color, use_color).await })
+            runtime
+                .block_on(async move { run_async_commands(cli, use_color, is_interactive).await })
         }
     }
 }
 
 async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
     // Authentication priority:
-    // 1. Command line --api-key (not implemented yet)
-    // 2. LINEAR_API_KEY env var
-    // 3. OAuth token from keychain (if feature enabled)
+    // 1. LINEAR_API_KEY env var
+    // 2. OAuth token from keychain (if feature enabled)
+    // Note: Command line --api-key flag not implemented (use env var instead)
     let auth_token = match env::var("LINEAR_API_KEY") {
         Ok(key) => key,
         Err(_) => {
@@ -377,7 +823,15 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                 println!("{}", output);
             }
         }
-        Commands::Issue { id, json, raw } => {
+        Commands::Issue {
+            id,
+            json,
+            raw,
+            #[cfg(feature = "inline-images")]
+            no_images,
+            #[cfg(feature = "inline-images")]
+            force_images,
+        } => {
             let spinner = create_spinner(&format!("Fetching issue {}...", id), is_interactive);
             match client.get_issue(id).await {
                 Ok(issue) => {
@@ -398,11 +852,115 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                             TableFormatter::new_with_interactive(use_color, is_interactive);
                         // Use TTY detection for rich formatting, allow --raw to override
                         let use_rich_formatting = is_interactive && !raw;
-                        match formatter.format_detailed_issue_rich(&issue, use_rich_formatting) {
-                            Ok(output) => output,
-                            Err(e) => {
-                                display_error(&e, use_color);
-                                std::process::exit(1);
+
+                        // Determine if images should be enabled based on correct logic:
+                        // - Interactive (TTY) + no --no-images = Enable images
+                        // - Non-interactive + --force-images = Enable images
+                        // - Non-interactive + no --force-images = Disable images
+                        // - Any case + --no-images = Disable images
+                        #[cfg(feature = "inline-images")]
+                        {
+                            let should_enable_images = {
+                                if no_images {
+                                    // --no-images flag always disables
+                                    false
+                                } else if force_images {
+                                    // --force-images enables even when non-interactive
+                                    true
+                                } else {
+                                    // Default: enable only when interactive (TTY) and rich formatting
+                                    use_rich_formatting
+                                }
+                            };
+
+                            if should_enable_images {
+                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                    eprintln!("Creating image manager for issue processing...");
+                                }
+
+                                // Create image manager and use async image processing
+                                match crate::image_protocols::ImageManager::new() {
+                                    Ok(mut image_manager) => {
+                                        // Enable the image manager (it auto-detects terminal capabilities)
+                                        image_manager.set_enabled(true);
+
+                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                            eprintln!(
+                                                "Image manager enabled: {}",
+                                                image_manager.is_enabled()
+                                            );
+                                        }
+
+                                        match formatter
+                                            .format_detailed_issue_with_image_manager_async(
+                                                &issue,
+                                                use_rich_formatting,
+                                                &image_manager,
+                                            )
+                                            .await
+                                        {
+                                            Ok(output) => output,
+                                            Err(e) => {
+                                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                                    eprintln!(
+                                                        "Image processing failed, falling back to regular formatting: {}",
+                                                        e
+                                                    );
+                                                }
+                                                // Fallback to regular formatting
+                                                match formatter.format_detailed_issue_rich(
+                                                    &issue,
+                                                    use_rich_formatting,
+                                                ) {
+                                                    Ok(output) => output,
+                                                    Err(e) => {
+                                                        display_error(&e, use_color);
+                                                        std::process::exit(1);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                            eprintln!("Failed to create image manager: {}", e);
+                                        }
+                                        // Fallback to regular formatting
+                                        match formatter
+                                            .format_detailed_issue_rich(&issue, use_rich_formatting)
+                                        {
+                                            Ok(output) => output,
+                                            Err(e) => {
+                                                display_error(&e, use_color);
+                                                std::process::exit(1);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Images disabled - use regular rich formatting
+                                match formatter
+                                    .format_detailed_issue_rich(&issue, use_rich_formatting)
+                                {
+                                    Ok(output) => output,
+                                    Err(e) => {
+                                        display_error(&e, use_color);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                        }
+
+                        #[cfg(not(feature = "inline-images"))]
+                        {
+                            // Images not compiled in - use regular rich formatting
+                            match formatter.format_detailed_issue_rich(&issue, use_rich_formatting)
+                            {
+                                Ok(output) => output,
+                                Err(e) => {
+                                    display_error(&e, use_color);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                     };
@@ -462,6 +1020,10 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
         Commands::Login { .. } | Commands::Logout => {
             // These commands are handled earlier, this should never be reached
             unreachable!()
+        }
+        #[cfg(feature = "inline-images")]
+        Commands::Images { action } => {
+            handle_images_command(action, use_color, is_interactive).await?
         }
     }
 
@@ -531,6 +1093,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test custom limit
@@ -552,6 +1116,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test short form
@@ -573,6 +1139,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON flag
@@ -594,6 +1162,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test JSON with pretty flag
@@ -615,6 +1185,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test pretty flag requires json (should fail)
@@ -629,7 +1201,7 @@ mod tests {
         // Test basic issue command
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-123"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-123");
                 assert!(!json);
                 assert!(!raw);
@@ -642,7 +1214,7 @@ mod tests {
         // Test issue command with JSON
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-456", "--json"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-456");
                 assert!(json);
                 assert!(!raw);
@@ -655,7 +1227,7 @@ mod tests {
         // Test issue command with UUID
         let cli = Cli::try_parse_from(["linear", "issue", "abc-123-def-456"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "abc-123-def-456");
                 assert!(!json);
                 assert!(!raw);
@@ -668,7 +1240,7 @@ mod tests {
         // Test issue command with --raw flag
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-789", "--raw"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-789");
                 assert!(!json);
                 assert!(raw);
@@ -681,7 +1253,7 @@ mod tests {
         // Test issue command with both --json and --raw flags
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-999", "--json", "--raw"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-999");
                 assert!(json);
                 assert!(raw);
@@ -717,6 +1289,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test status filter
@@ -736,6 +1310,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test team filter
@@ -755,6 +1331,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
 
         // Test combined filters
@@ -784,6 +1362,8 @@ mod tests {
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            #[cfg(feature = "inline-images")]
+            Commands::Images { .. } => panic!("Expected Issues command"),
         }
     }
 
