@@ -13,6 +13,9 @@ mod constants;
 mod output;
 mod types;
 
+#[cfg(feature = "inline-images")]
+mod image_protocols;
+
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
 fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool) -> bool {
@@ -119,6 +122,16 @@ enum Commands {
         /// Force raw markdown output (skip rich formatting)
         #[arg(long)]
         raw: bool,
+
+        /// Disable inline image display (requires inline-images feature)
+        #[cfg(feature = "inline-images")]
+        #[arg(long)]
+        no_images: bool,
+
+        /// Force inline image display even in unsupported terminals (requires inline-images feature)
+        #[cfg(feature = "inline-images")]
+        #[arg(long, conflicts_with = "no_images")]
+        force_images: bool,
     },
     /// Check connection to Linear
     Status {
@@ -146,12 +159,9 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Determine if color should be used
-    let use_color = determine_use_color(
-        cli.no_color,
-        cli.force_color,
-        std::io::stdout().is_terminal(),
-    );
+    // Determine if color should be used and if we're interactive
+    let is_interactive = std::io::stdout().is_terminal();
+    let use_color = determine_use_color(cli.no_color, cli.force_color, is_interactive);
 
     // Handle OAuth commands first (synchronous commands)
     match &cli.command {
@@ -225,16 +235,17 @@ fn main() -> Result<()> {
         _ => {
             // Continue with async commands
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async move { run_async_commands(cli, use_color, use_color).await })
+            runtime
+                .block_on(async move { run_async_commands(cli, use_color, is_interactive).await })
         }
     }
 }
 
 async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
     // Authentication priority:
-    // 1. Command line --api-key (not implemented yet)
-    // 2. LINEAR_API_KEY env var
-    // 3. OAuth token from keychain (if feature enabled)
+    // 1. LINEAR_API_KEY env var
+    // 2. OAuth token from keychain (if feature enabled)
+    // Note: Command line --api-key flag not implemented (use env var instead)
     let auth_token = match env::var("LINEAR_API_KEY") {
         Ok(key) => key,
         Err(_) => {
@@ -377,7 +388,15 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                 println!("{}", output);
             }
         }
-        Commands::Issue { id, json, raw } => {
+        Commands::Issue {
+            id,
+            json,
+            raw,
+            #[cfg(feature = "inline-images")]
+            no_images,
+            #[cfg(feature = "inline-images")]
+            force_images,
+        } => {
             let spinner = create_spinner(&format!("Fetching issue {}...", id), is_interactive);
             match client.get_issue(id).await {
                 Ok(issue) => {
@@ -398,11 +417,115 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                             TableFormatter::new_with_interactive(use_color, is_interactive);
                         // Use TTY detection for rich formatting, allow --raw to override
                         let use_rich_formatting = is_interactive && !raw;
-                        match formatter.format_detailed_issue_rich(&issue, use_rich_formatting) {
-                            Ok(output) => output,
-                            Err(e) => {
-                                display_error(&e, use_color);
-                                std::process::exit(1);
+
+                        // Determine if images should be enabled based on correct logic:
+                        // - Interactive (TTY) + no --no-images = Enable images
+                        // - Non-interactive + --force-images = Enable images
+                        // - Non-interactive + no --force-images = Disable images
+                        // - Any case + --no-images = Disable images
+                        #[cfg(feature = "inline-images")]
+                        {
+                            let should_enable_images = {
+                                if no_images {
+                                    // --no-images flag always disables
+                                    false
+                                } else if force_images {
+                                    // --force-images enables even when non-interactive
+                                    true
+                                } else {
+                                    // Default: enable only when interactive (TTY) and rich formatting
+                                    use_rich_formatting
+                                }
+                            };
+
+                            if should_enable_images {
+                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                    eprintln!("Creating image manager for issue processing...");
+                                }
+
+                                // Create image manager and use async image processing
+                                match crate::image_protocols::ImageManager::new() {
+                                    Ok(mut image_manager) => {
+                                        // Enable the image manager (it auto-detects terminal capabilities)
+                                        image_manager.set_enabled(true);
+
+                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                            eprintln!(
+                                                "Image manager enabled: {}",
+                                                image_manager.is_enabled()
+                                            );
+                                        }
+
+                                        match formatter
+                                            .format_detailed_issue_with_image_manager_async(
+                                                &issue,
+                                                use_rich_formatting,
+                                                &image_manager,
+                                            )
+                                            .await
+                                        {
+                                            Ok(output) => output,
+                                            Err(e) => {
+                                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                                    eprintln!(
+                                                        "Image processing failed, falling back to regular formatting: {}",
+                                                        e
+                                                    );
+                                                }
+                                                // Fallback to regular formatting
+                                                match formatter.format_detailed_issue_rich(
+                                                    &issue,
+                                                    use_rich_formatting,
+                                                ) {
+                                                    Ok(output) => output,
+                                                    Err(e) => {
+                                                        display_error(&e, use_color);
+                                                        std::process::exit(1);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                                            eprintln!("Failed to create image manager: {}", e);
+                                        }
+                                        // Fallback to regular formatting
+                                        match formatter
+                                            .format_detailed_issue_rich(&issue, use_rich_formatting)
+                                        {
+                                            Ok(output) => output,
+                                            Err(e) => {
+                                                display_error(&e, use_color);
+                                                std::process::exit(1);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Images disabled - use regular rich formatting
+                                match formatter
+                                    .format_detailed_issue_rich(&issue, use_rich_formatting)
+                                {
+                                    Ok(output) => output,
+                                    Err(e) => {
+                                        display_error(&e, use_color);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                        }
+
+                        #[cfg(not(feature = "inline-images"))]
+                        {
+                            // Images not compiled in - use regular rich formatting
+                            match formatter.format_detailed_issue_rich(&issue, use_rich_formatting)
+                            {
+                                Ok(output) => output,
+                                Err(e) => {
+                                    display_error(&e, use_color);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                     };
@@ -629,7 +752,7 @@ mod tests {
         // Test basic issue command
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-123"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-123");
                 assert!(!json);
                 assert!(!raw);
@@ -642,7 +765,7 @@ mod tests {
         // Test issue command with JSON
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-456", "--json"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-456");
                 assert!(json);
                 assert!(!raw);
@@ -655,7 +778,7 @@ mod tests {
         // Test issue command with UUID
         let cli = Cli::try_parse_from(["linear", "issue", "abc-123-def-456"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "abc-123-def-456");
                 assert!(!json);
                 assert!(!raw);
@@ -668,7 +791,7 @@ mod tests {
         // Test issue command with --raw flag
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-789", "--raw"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-789");
                 assert!(!json);
                 assert!(raw);
@@ -681,7 +804,7 @@ mod tests {
         // Test issue command with both --json and --raw flags
         let cli = Cli::try_parse_from(["linear", "issue", "ENG-999", "--json", "--raw"]).unwrap();
         match cli.command {
-            Commands::Issue { id, json, raw } => {
+            Commands::Issue { id, json, raw, .. } => {
                 assert_eq!(id, "ENG-999");
                 assert!(json);
                 assert!(raw);
