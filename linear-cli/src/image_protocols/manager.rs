@@ -9,6 +9,7 @@ use crate::image_protocols::{
     scaling::{ImageScaler, ScalingConfig},
 };
 use anyhow::{Result, anyhow};
+use log;
 
 pub struct ImageManager {
     downloader: Option<ImageDownloader>,
@@ -105,9 +106,7 @@ impl ImageManager {
         match self.process_image_internal(url, alt_text).await {
             Ok(rendered) => ImageRenderResult::Rendered(rendered),
             Err(e) => {
-                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                    eprintln!("Image processing failed for {}: {}", url, e);
-                }
+                log::debug!("Image processing failed for {}: {}", url, e);
 
                 // Create fallback link
                 let fallback = if alt_text.is_empty() {
@@ -139,9 +138,7 @@ impl ImageManager {
         // Check cache first (for processed images)
         let cache_key = format!("processed_{}", self.generate_cache_key(url));
         if let Some(cached_data) = cache.get(&cache_key).await {
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Using cached processed image: {}", url);
-            }
+            log::debug!("Using cached processed image: {}", url);
             return self.render_image_data(&cached_data, alt_text, url);
         }
 
@@ -153,9 +150,7 @@ impl ImageManager {
 
         // Cache the processed data
         if let Err(e) = cache.put(&cache_key, &image_data).await {
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Warning: Failed to cache processed image {}: {}", url, e);
-            }
+            log::debug!("Warning: Failed to cache processed image {}: {}", url, e);
         }
 
         // Render the image
@@ -165,9 +160,7 @@ impl ImageManager {
     /// Process image data through conversion and scaling pipeline
     async fn process_image_data(&self, mut data: Vec<u8>, url: &str) -> Result<Vec<u8>> {
         // Step 1: Format conversion (if needed)
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            eprintln!("Processing image: {}", url);
-        }
+        log::debug!("Processing image: {}", url);
 
         data = self.converter.convert_image(&data, None)?;
 
@@ -176,12 +169,10 @@ impl ImageManager {
             // Get image metadata to check if scaling is needed
             if let Ok(metadata) = scaler.get_image_metadata(&data) {
                 if scaler.needs_scaling(&metadata) {
-                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                        eprintln!(
-                            "Scaling image from {} to fit terminal",
-                            metadata.dimensions_str()
-                        );
-                    }
+                    log::debug!(
+                        "Scaling image from {} to fit terminal",
+                        metadata.dimensions_str()
+                    );
                     data = scaler.scale_image(&data)?;
                 }
             }

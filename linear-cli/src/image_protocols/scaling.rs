@@ -4,6 +4,7 @@
 use anyhow::{Result, anyhow};
 use crossterm::terminal::size as terminal_size;
 use image::{DynamicImage, ImageFormat, imageops::FilterType};
+use log;
 
 #[derive(Debug, Clone)]
 pub struct TerminalDimensions {
@@ -83,22 +84,18 @@ impl ImageScaler {
 
         // Determine if scaling is needed
         if let Some(target_dims) = self.calculate_target_dimensions(&img) {
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!(
-                    "Scaling image from {}x{} to {}x{}",
-                    img.width(),
-                    img.height(),
-                    target_dims.0,
-                    target_dims.1
-                );
-            }
+            log::debug!(
+                "Scaling image from {}x{} to {}x{}",
+                img.width(),
+                img.height(),
+                target_dims.0,
+                target_dims.1
+            );
 
             // Resize the image
             img = img.resize(target_dims.0, target_dims.1, self.config.quality);
         } else {
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Image scaling skipped - no terminal dimensions or already optimal size");
-            }
+            log::debug!("Image scaling skipped - no terminal dimensions or already optimal size");
         }
 
         // Convert back to bytes

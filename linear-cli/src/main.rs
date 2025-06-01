@@ -9,6 +9,7 @@ use secrecy::SecretString;
 use std::env;
 use std::io::IsTerminal;
 
+mod cli_output;
 mod constants;
 mod output;
 mod types;
@@ -16,6 +17,7 @@ mod types;
 #[cfg(feature = "inline-images")]
 mod image_protocols;
 
+use crate::cli_output::CliOutput;
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
 fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool) -> bool {
@@ -49,11 +51,8 @@ fn create_spinner(message: &str, is_interactive: bool) -> Option<ProgressBar> {
 }
 
 fn display_error(error: &LinearError, use_color: bool) {
-    if use_color {
-        eprintln!("{} {}", "Error:".red().bold(), error);
-    } else {
-        eprintln!("Error: {}", error);
-    }
+    let cli = CliOutput::with_color(use_color);
+    cli.error(&error.to_string());
 
     if let Some(help) = error.help_text() {
         eprintln!();
@@ -195,21 +194,15 @@ async fn handle_images_command(
                         if let Some(s) = spinner {
                             s.finish_and_clear();
                         }
-                        if use_color {
-                            println!("{} Image cache cleared successfully!", "✓".green());
-                        } else {
-                            println!("✓ Image cache cleared successfully!");
-                        }
+                        let cli = CliOutput::with_color(use_color);
+                        cli.success("Image cache cleared successfully!");
                     }
                     Err(e) => {
                         if let Some(s) = spinner {
                             s.finish_and_clear();
                         }
-                        if use_color {
-                            eprintln!("{} Failed to clear cache: {}", "✗".red(), e);
-                        } else {
-                            eprintln!("✗ Failed to clear cache: {}", e);
-                        }
+                        let cli = CliOutput::with_color(use_color);
+                        cli.error(&format!("Failed to clear cache: {}", e));
                         std::process::exit(1);
                     }
                 },
@@ -578,10 +571,8 @@ async fn handle_images_command(
                 println!("• Use 'linear images test' to verify functionality");
             }
 
-            if std::env::var("LINEAR_CLI_VERBOSE").is_err() {
-                println!(
-                    "• Enable verbose mode with LINEAR_CLI_VERBOSE=1 for detailed processing info"
-                );
+            if std::env::var("RUST_LOG").is_err() {
+                println!("• Enable debug logging with RUST_LOG=debug for detailed processing info");
             }
         }
     }
@@ -651,11 +642,8 @@ fn main() -> Result<()> {
                     if let Some(s) = spinner {
                         s.finish_and_clear();
                     }
-                    if use_color {
-                        println!("{} Successfully logged out!", "✓".green());
-                    } else {
-                        println!("✓ Successfully logged out!");
-                    }
+                    let cli = CliOutput::with_color(use_color);
+                    cli.success("Successfully logged out!");
                     Ok(())
                 }
                 Err(e) => {
@@ -874,9 +862,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                             };
 
                             if should_enable_images {
-                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                                    eprintln!("Creating image manager for issue processing...");
-                                }
+                                log::debug!("Creating image manager for issue processing...");
 
                                 // Create image manager and use async image processing
                                 match crate::image_protocols::ImageManager::new() {
@@ -884,12 +870,10 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                                         // Enable the image manager (it auto-detects terminal capabilities)
                                         image_manager.set_enabled(true);
 
-                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                                            eprintln!(
-                                                "Image manager enabled: {}",
-                                                image_manager.is_enabled()
-                                            );
-                                        }
+                                        log::debug!(
+                                            "Image manager enabled: {}",
+                                            image_manager.is_enabled()
+                                        );
 
                                         match formatter
                                             .format_detailed_issue_with_image_manager_async(
@@ -901,12 +885,10 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                                         {
                                             Ok(output) => output,
                                             Err(e) => {
-                                                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                                                    eprintln!(
-                                                        "Image processing failed, falling back to regular formatting: {}",
-                                                        e
-                                                    );
-                                                }
+                                                log::debug!(
+                                                    "Image processing failed, falling back to regular formatting: {}",
+                                                    e
+                                                );
                                                 // Fallback to regular formatting
                                                 match formatter.format_detailed_issue_rich(
                                                     &issue,
@@ -922,9 +904,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                                         }
                                     }
                                     Err(e) => {
-                                        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                                            eprintln!("Failed to create image manager: {}", e);
-                                        }
+                                        log::debug!("Failed to create image manager: {}", e);
                                         // Fallback to regular formatting
                                         match formatter
                                             .format_detailed_issue_rich(&issue, use_rich_formatting)

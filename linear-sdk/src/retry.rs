@@ -3,6 +3,7 @@
 
 use crate::constants::retry;
 use crate::error::LinearError;
+use log;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -40,9 +41,10 @@ where
     for attempt in 0..=config.max_retries {
         if attempt > 0 {
             if verbose {
-                eprintln!(
+                log::debug!(
                     "Retrying operation (attempt {}/{})",
-                    attempt, config.max_retries
+                    attempt,
+                    config.max_retries
                 );
             }
             sleep(delay).await;
@@ -62,7 +64,7 @@ where
                 }
 
                 if verbose {
-                    eprintln!("Request failed (retryable): {}", error);
+                    log::debug!("Request failed (retryable): {}", error);
                 }
                 last_error = Some(error);
             }

@@ -2,6 +2,7 @@
 // ABOUTME: Implements URL-based hashing and cache size management
 
 use anyhow::{Result, anyhow};
+use log;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,9 +51,7 @@ impl ImageCache {
                     if age_seconds < self.max_age_seconds {
                         // Cache hit - read and return
                         if let Ok(data) = fs::read(&cache_path) {
-                            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                                eprintln!("Cache hit: {}", url);
-                            }
+                            log::debug!("Cache hit: {}", url);
                             return Some(data);
                         }
                     }
@@ -60,9 +59,7 @@ impl ImageCache {
             }
         }
 
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            eprintln!("Cache miss: {}", url);
-        }
+        log::debug!("Cache miss: {}", url);
         None
     }
 
@@ -90,9 +87,7 @@ impl ImageCache {
             )
         })?;
 
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            eprintln!("Cached: {} -> {:?}", url, cache_path);
-        }
+        log::debug!("Cached: {} -> {:?}", url, cache_path);
 
         // Trigger cleanup in background (non-blocking)
         let self_clone = Self {
@@ -135,9 +130,7 @@ impl ImageCache {
 
     async fn cleanup_if_needed(&self) -> Result<()> {
         if let Err(e) = self.cleanup().await {
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Cache cleanup error: {}", e);
-            }
+            log::debug!("Cache cleanup error: {}", e);
         }
         Ok(())
     }
@@ -149,12 +142,11 @@ impl ImageCache {
             return Ok(());
         }
 
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            eprintln!(
-                "Cache size {} bytes exceeds limit {} bytes, cleaning up...",
-                total_size, self.max_size_bytes
-            );
-        }
+        log::debug!(
+            "Cache size {} bytes exceeds limit {} bytes, cleaning up...",
+            total_size,
+            self.max_size_bytes
+        );
 
         // Get all cache files with their access times
         let mut files = self.collect_cache_files().await?;
@@ -171,14 +163,10 @@ impl ImageCache {
             }
 
             if let Err(e) = fs::remove_file(&path) {
-                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                    eprintln!("Failed to remove cache file {:?}: {}", path, e);
-                }
+                log::debug!("Failed to remove cache file {:?}: {}", path, e);
             } else {
                 current_size = current_size.saturating_sub(size);
-                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                    eprintln!("Removed cache file: {:?}", path);
-                }
+                log::debug!("Removed cache file: {:?}", path);
             }
         }
 

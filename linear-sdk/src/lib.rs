@@ -212,8 +212,8 @@ impl LinearClient {
                 .split("::")
                 .last()
                 .unwrap_or("unknown");
-            eprintln!("Sending GraphQL query: {}", query_name);
-            eprintln!(
+            log::debug!("Sending GraphQL query: {}", query_name);
+            log::debug!(
                 "Request body: {}",
                 serde_json::to_string_pretty(&request_body).unwrap_or_default()
             );
@@ -236,8 +236,8 @@ impl LinearClient {
                     .map_err(LinearError::from)?;
 
                 if verbose {
-                    eprintln!("Request completed in {:?}", start_time.elapsed());
-                    eprintln!("Response status: {}", response.status());
+                    log::debug!("Request completed in {:?}", start_time.elapsed());
+                    log::debug!("Response status: {}", response.status());
                 }
 
                 // Check for HTTP error status codes
