@@ -1,7 +1,7 @@
 # ABOUTME: Makefile for common development commands and workflow automation
 # ABOUTME: Provides shortcuts for testing, formatting, linting, and building
 
-.PHONY: test test-snapshots test-integration test-debug fmt lint build build-images build-no-images release clean help run run-debug run-piped run-images run-no-images test-images test-no-images debug-deps check dev-setup dev all
+.PHONY: test test-snapshots test-integration test-debug fmt lint build build-images build-no-images release clean install install-images help run run-debug run-piped run-images run-no-images test-images test-no-images debug-deps check dev-setup dev all
 
 # Default target
 help:
@@ -21,6 +21,8 @@ help:
 	@echo "  make build-images   - Build debug version with inline-images feature"
 	@echo "  make build-no-images - Build debug version without inline-images feature"
 	@echo "  make release        - Build release version"
+	@echo "  make install        - Install binary locally"
+	@echo "  make install-images - Install binary locally with inline-images support"
 	@echo "  make clean          - Clean build artifacts"
 	@echo ""
 	@echo "🚀 Running:"
@@ -73,6 +75,14 @@ build:
 # Build release version
 release:
 	cargo build --release --workspace
+
+# Install binary locally
+install:
+	cargo install --path linear-cli
+
+# Install binary locally with inline-images support
+install-images:
+	cargo install --path linear-cli --features inline-images
 
 # Clean build artifacts
 clean:
