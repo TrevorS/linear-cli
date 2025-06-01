@@ -3,6 +3,7 @@
 
 use crate::image_protocols::{ImageUrlValidator, TerminalCapabilities};
 use anyhow::{Result, anyhow};
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use std::time::Duration;
 
@@ -10,12 +11,13 @@ pub struct ImageDownloader {
     client: Client,
     validator: ImageUrlValidator,
     capabilities: TerminalCapabilities,
+    show_progress: bool,
 }
 
 impl ImageDownloader {
     pub fn new(capabilities: TerminalCapabilities) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30)) // Increased timeout for larger images
             .user_agent("linear-cli/1.0")
             .redirect(reqwest::redirect::Policy::limited(3))
             .build()
@@ -23,11 +25,21 @@ impl ImageDownloader {
 
         let validator = ImageUrlValidator::new();
 
+        // Enable progress for TTY and when not in quiet mode
+        let show_progress =
+            atty::is(atty::Stream::Stderr) && std::env::var("LINEAR_CLI_QUIET").is_err();
+
         Ok(Self {
             client,
             validator,
             capabilities,
+            show_progress,
         })
+    }
+
+    pub fn with_progress(mut self, show_progress: bool) -> Self {
+        self.show_progress = show_progress;
+        self
     }
 
     pub async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
@@ -121,6 +133,38 @@ impl ImageDownloader {
         url: &str,
     ) -> Result<Vec<u8>> {
         let max_size = self.validator.max_size_bytes();
+        let content_length = response.content_length();
+
+        // Create progress bar if enabled and we know the content length
+        let progress_bar = if self.show_progress && content_length.is_some() {
+            let pb = ProgressBar::new(content_length.unwrap());
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{msg} [{bar:25.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
+                    .unwrap()
+                    .progress_chars("=>-"),
+            );
+
+            // Extract filename from URL for display
+            let filename = url.split('/').last().unwrap_or("image");
+            pb.set_message(format!("Downloading {}", filename));
+            Some(pb)
+        } else if self.show_progress {
+            // Spinner for unknown size
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg} {bytes}")
+                    .unwrap(),
+            );
+
+            let filename = url.split('/').last().unwrap_or("image");
+            pb.set_message(format!("Downloading {}", filename));
+            Some(pb)
+        } else {
+            None
+        };
+
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
 
@@ -131,8 +175,16 @@ impl ImageDownloader {
 
             bytes.extend_from_slice(&chunk);
 
+            // Update progress bar
+            if let Some(ref pb) = progress_bar {
+                pb.set_position(bytes.len() as u64);
+            }
+
             // Check size limit during download
             if bytes.len() as u64 > max_size {
+                if let Some(pb) = progress_bar {
+                    pb.finish_with_message("Download failed: size limit exceeded");
+                }
                 return Err(anyhow!(
                     "Image exceeded size limit during download: {} bytes (max: {}): {}",
                     bytes.len(),
@@ -140,6 +192,16 @@ impl ImageDownloader {
                     url
                 ));
             }
+        }
+
+        // Finish progress bar
+        if let Some(pb) = progress_bar {
+            let filename = url.split('/').last().unwrap_or("image");
+            pb.finish_with_message(format!(
+                "Downloaded {} ({})",
+                filename,
+                format_bytes(bytes.len())
+            ));
         }
 
         Ok(bytes)
@@ -175,6 +237,17 @@ impl ImageDownloader {
     #[allow(dead_code)] // May be used in future CLI enhancements
     pub fn can_handle_url(&self, url: &str) -> bool {
         self.capabilities.supports_inline_images() && self.validator.is_image_url(url)
+    }
+}
+
+/// Format bytes in a human-readable way
+fn format_bytes(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
 

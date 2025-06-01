@@ -17,15 +17,19 @@ pub trait ImageProtocol {
 }
 
 pub mod cache;
+pub mod conversion;
 pub mod detection;
 pub mod downloader;
 pub mod iterm2;
 pub mod kitty;
 pub mod manager;
+pub mod scaling;
 pub mod url_validator;
 
 pub use cache::ImageCache;
+pub use conversion::{ConversionConfig, ImageConverter};
 pub use detection::TerminalCapabilities;
 pub use downloader::ImageDownloader;
 pub use manager::{ImageManager, ImageRenderResult};
+pub use scaling::{ImageScaler, ScalingConfig};
 pub use url_validator::ImageUrlValidator;
