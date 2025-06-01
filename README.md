@@ -72,6 +72,12 @@ linear issues --format json --pretty
 # View detailed information about a specific issue
 linear issue ENG-123
 
+# View issue with inline images (if supported by terminal)
+linear issue ENG-123 --force-images
+
+# Disable inline images explicitly
+linear issue ENG-123 --no-images
+
 # Get current user information
 linear me
 
@@ -89,22 +95,28 @@ linear --help
   - Priority indicators with visual cues
   - Smart truncation for long titles
 - **📝 Markdown Rendering**: Full markdown support in issue descriptions with:
-  - Syntax highlighting for code blocks
+  - Syntax highlighting for code blocks (25+ languages supported)
   - Formatted lists, blockquotes, and emphasis
   - Proper heading hierarchy
   - Media attachments with visual indicators
+- **🖼️ Inline Image Display** (Optional): Display images from Linear issues directly in compatible terminals:
+  - Automatic terminal detection (Kitty, Ghostty, WezTerm)
+  - Secure image downloading with domain validation
+  - Smart caching for performance
+  - Graceful fallback to clickable links
 - **🔗 Clickable Links**: OSC-8 hyperlink support for compatible terminals (iTerm2, Ghostty, WezTerm, etc.)
 - **📋 Multiple Output Formats**: Table (default) or JSON with optional pretty-printing
 - **🎯 Detailed Issue Views**: Complete issue information including:
-  - Description with full markdown rendering
+  - Description with full markdown rendering and inline images
   - Assignee, team, and project details
   - Labels with color indicators
   - Priority levels
   - Timestamps
   - Direct Linear links
 - **⚡ Fast and Efficient**: Built with Rust for optimal performance
-- **🛡️ Robust Error Handling**: Automatic retries with exponential backoff
+- **🛡️ Robust Error Handling**: Automatic retries with exponential backoff and enhanced error messages
 - **🎮 Color Control**: Respects `--no-color` flag and `NO_COLOR` environment variable
+- **📋 Structured Logging**: Comprehensive debug logging with `RUST_LOG` environment variable
 - **🧪 Well-tested**: Comprehensive test suite with snapshot testing
 
 ## Development
@@ -118,19 +130,35 @@ This project uses a Cargo workspace structure:
 ### Getting Started
 
 ```bash
+# Development environment setup (recommended)
+make dev-setup
+
+# Quick development check (format, lint, test)
+make dev
+
 # Build the workspace
-cargo build
+make build  # or cargo build
 
 # Run tests
-cargo test --workspace
+make test   # or cargo test --workspace
+
+# Run tests with snapshot review
+make test-snapshots
 
 # Run the CLI
-cargo run -p linear-cli
+make run    # or cargo run -p linear-cli
+
+# Run with debug logging
+make run-debug
 
 # Run linting and formatting
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
+make fmt lint  # or cargo fmt --all && cargo clippy
+
+# Check for dependency issues
+make debug-deps
 ```
+
+See `make help` for all available commands.
 
 ### Pre-commit Hooks
 
