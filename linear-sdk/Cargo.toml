@@ -13,12 +13,12 @@ thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["full"] }
 
 # Enhanced error handling dependencies
-http = "0.2"
+http = "1.0"
 eyre = "0.6"
 color-eyre = "0.6"
 
 # Builder pattern dependencies
-typed-builder = "0.18"
+typed-builder = "0.21"
 secrecy = "0.10.2"
 
 # GraphQL abstraction layer dependencies

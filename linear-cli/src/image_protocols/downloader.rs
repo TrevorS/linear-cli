@@ -27,8 +27,10 @@ impl ImageDownloader {
         let validator = ImageUrlValidator::new();
 
         // Enable progress for TTY and when not in quiet mode
-        let show_progress =
-            atty::is(atty::Stream::Stderr) && std::env::var("LINEAR_CLI_QUIET").is_err();
+        let show_progress = {
+            use std::io::IsTerminal;
+            std::io::stderr().is_terminal() && std::env::var("LINEAR_CLI_QUIET").is_err()
+        };
 
         Ok(Self {
             client,
