@@ -64,6 +64,14 @@ cargo run -p xtask -- schema --api-key YOUR_API_KEY  # Update GraphQL schema
 - **For users**: OAuth flow with keychain storage for secure token management
 - API key takes precedence over OAuth if both are available
 
+### Logging
+The CLI uses structured logging via the `log` crate and `env_logger`:
+- **Enable debug logging**: `RUST_LOG=debug linear <command>`
+- **CLI-specific logging**: `RUST_LOG=linear_cli=debug linear <command>`
+- **SDK-specific logging**: `RUST_LOG=linear_sdk=debug linear <command>`
+- **Multiple modules**: `RUST_LOG=linear_cli=debug,linear_sdk=info linear <command>`
+- **Legacy**: `LINEAR_CLI_VERBOSE` is still displayed in diagnostics for reference but no longer controls debug output
+
 ### Inline Images (Optional Feature)
 The `inline-images` feature enables displaying images from Linear issues directly in compatible terminals:
 - **Supported terminals**: Kitty (primary), Ghostty, WezTerm
@@ -116,6 +124,7 @@ The project is structured as a Cargo workspace with:
 - **GraphQL**: graphql_client with build-time code generation
 - **Error Handling**: anyhow with custom error types and native retry logic
 - **Terminal UI**: tabled (ansi feature), owo-colors with TTY detection
+- **Logging**: structured logging with env_logger and log crate
 - **Testing**: insta for snapshots, mockito for mocked HTTP responses
 - **Authentication**: OAuth with keychain storage, API key fallback
 

@@ -3,6 +3,7 @@
 
 use anyhow::{Result, anyhow};
 use image::{DynamicImage, ImageEncoder, ImageFormat};
+use log;
 use std::io::Cursor;
 
 #[derive(Debug, Clone)]
@@ -69,12 +70,10 @@ impl ImageConverter {
         if let Some(format) = detected_format {
             if self.is_terminal_compatible(format) && data.len() <= self.config.max_file_size_bytes
             {
-                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                    eprintln!(
-                        "Image format {} is already terminal-compatible, no conversion needed",
-                        format_name(format)
-                    );
-                }
+                log::debug!(
+                    "Image format {} is already terminal-compatible, no conversion needed",
+                    format_name(format)
+                );
                 return Ok(data.to_vec());
             }
         }
@@ -83,13 +82,11 @@ impl ImageConverter {
         let img = image::load_from_memory(data)
             .map_err(|e| anyhow!("Failed to load image for conversion: {}", e))?;
 
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            let format_str = detected_format.map(format_name).unwrap_or("unknown");
-            eprintln!(
-                "Converting image from {} to terminal-compatible format",
-                format_str
-            );
-        }
+        let format_str = detected_format.map(format_name).unwrap_or("unknown");
+        log::debug!(
+            "Converting image from {} to terminal-compatible format",
+            format_str
+        );
 
         // Determine target format
         let target_format = self.determine_target_format(&img, detected_format);
@@ -221,12 +218,10 @@ impl ImageConverter {
         if buffer.len() > self.config.max_file_size_bytes {
             // Try to reduce quality/compression if possible
             if format == ImageFormat::Jpeg && self.config.jpeg_quality > 50 {
-                if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                    eprintln!(
-                        "Image too large ({}), retrying with lower JPEG quality",
-                        format_size(buffer.len())
-                    );
-                }
+                log::debug!(
+                    "Image too large ({}), retrying with lower JPEG quality",
+                    format_size(buffer.len())
+                );
                 let mut reduced_config = self.config.clone();
                 reduced_config.jpeg_quality = 50;
                 let reduced_converter = ImageConverter::with_config(reduced_config);
@@ -240,13 +235,11 @@ impl ImageConverter {
             }
         }
 
-        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-            eprintln!(
-                "Successfully converted image to {} ({})",
-                format_name(format),
-                format_size(buffer.len())
-            );
-        }
+        log::debug!(
+            "Successfully converted image to {} ({})",
+            format_name(format),
+            format_size(buffer.len())
+        );
 
         Ok(buffer)
     }

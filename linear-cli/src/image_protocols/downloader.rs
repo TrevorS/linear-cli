@@ -4,6 +4,7 @@
 use crate::image_protocols::{ImageUrlValidator, TerminalCapabilities};
 use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
+use log;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -96,12 +97,10 @@ impl ImageDownloader {
         // Linear uploads might not have proper content-type
         if self.validator.is_linear_upload_url(url) {
             // Allow, but log warning in verbose mode
-            if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!(
-                    "Warning: Linear upload URL missing image content-type: {}",
-                    url
-                );
-            }
+            log::debug!(
+                "Warning: Linear upload URL missing image content-type: {}",
+                url
+            );
             return Ok(());
         }
 
