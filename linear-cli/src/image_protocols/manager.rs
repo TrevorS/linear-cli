@@ -3,13 +3,18 @@
 
 use crate::image_protocols::{
     ImageCache, ImageDownloader, ImageProtocol, ImageUrlValidator, TerminalCapabilities,
-    iterm2::ITerm2Protocol, kitty::KittyProtocol,
+    conversion::{ConversionConfig, ImageConverter},
+    iterm2::ITerm2Protocol,
+    kitty::KittyProtocol,
+    scaling::{ImageScaler, ScalingConfig},
 };
 use anyhow::{Result, anyhow};
 
 pub struct ImageManager {
     downloader: Option<ImageDownloader>,
     cache: Option<ImageCache>,
+    scaler: Option<ImageScaler>,
+    converter: ImageConverter,
     capabilities: TerminalCapabilities,
     validator: ImageUrlValidator,
     enabled: bool,
@@ -30,20 +35,24 @@ impl ImageManager {
         let capabilities = TerminalCapabilities::detect();
         let enabled = capabilities.supports_inline_images();
 
-        let (downloader, cache) = if enabled {
+        let (downloader, cache, scaler) = if enabled {
             (
                 Some(ImageDownloader::new(capabilities.clone())?),
                 Some(ImageCache::new()?),
+                ImageScaler::new().ok(), // Optional - graceful fallback if terminal detection fails
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let validator = ImageUrlValidator::new();
+        let converter = ImageConverter::new();
 
         Ok(Self {
             downloader,
             cache,
+            scaler,
+            converter,
             capabilities,
             validator,
             enabled,
@@ -61,10 +70,13 @@ impl ImageManager {
         };
 
         let validator = ImageUrlValidator::new();
+        let converter = ImageConverter::new();
 
         Self {
             downloader: None,
             cache: None,
+            scaler: None,
+            converter,
             capabilities,
             validator,
             enabled: false,
@@ -124,26 +136,77 @@ impl ImageManager {
             .as_ref()
             .ok_or_else(|| anyhow!("Downloader not available in disabled mode"))?;
 
-        // Check cache first
-        if let Some(cached_data) = cache.get(url).await {
+        // Check cache first (for processed images)
+        let cache_key = format!("processed_{}", self.generate_cache_key(url));
+        if let Some(cached_data) = cache.get(&cache_key).await {
             if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Using cached image: {}", url);
+                eprintln!("Using cached processed image: {}", url);
             }
             return self.render_image_data(&cached_data, alt_text, url);
         }
 
         // Download image
-        let image_data = downloader.download_image(url).await?;
+        let mut image_data = downloader.download_image(url).await?;
 
-        // Cache the downloaded data
-        if let Err(e) = cache.put(url, &image_data).await {
+        // Process the image through conversion and scaling pipeline
+        image_data = self.process_image_data(image_data, url).await?;
+
+        // Cache the processed data
+        if let Err(e) = cache.put(&cache_key, &image_data).await {
             if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
-                eprintln!("Warning: Failed to cache image {}: {}", url, e);
+                eprintln!("Warning: Failed to cache processed image {}: {}", url, e);
             }
         }
 
         // Render the image
         self.render_image_data(&image_data, alt_text, url)
+    }
+
+    /// Process image data through conversion and scaling pipeline
+    async fn process_image_data(&self, mut data: Vec<u8>, url: &str) -> Result<Vec<u8>> {
+        // Step 1: Format conversion (if needed)
+        if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+            eprintln!("Processing image: {}", url);
+        }
+
+        data = self.converter.convert_image(&data, None)?;
+
+        // Step 2: Scaling (if scaler is available and needed)
+        if let Some(scaler) = &self.scaler {
+            // Get image metadata to check if scaling is needed
+            if let Ok(metadata) = scaler.get_image_metadata(&data) {
+                if scaler.needs_scaling(&metadata) {
+                    if std::env::var("LINEAR_CLI_VERBOSE").is_ok() {
+                        eprintln!(
+                            "Scaling image from {} to fit terminal",
+                            metadata.dimensions_str()
+                        );
+                    }
+                    data = scaler.scale_image(&data)?;
+                }
+            }
+        }
+
+        Ok(data)
+    }
+
+    /// Generate a cache key that includes processing parameters
+    fn generate_cache_key(&self, url: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+
+        // Include terminal dimensions in cache key so images are re-scaled for different terminals
+        if let Some(scaler) = &self.scaler {
+            if let Some(dims) = scaler.get_terminal_dimensions() {
+                dims.width.hash(&mut hasher);
+                dims.height.hash(&mut hasher);
+            }
+        }
+
+        format!("{:x}", hasher.finish())
     }
 
     /// Render image data using appropriate protocol
@@ -219,10 +282,13 @@ impl ImageManagerBuilder for ImageManager {
         };
 
         let validator = ImageUrlValidator::new();
+        let converter = ImageConverter::new();
 
         Ok(ImageManager {
             downloader,
             cache,
+            scaler: None, // No scaler in this builder method
+            converter,
             capabilities,
             validator,
             enabled,
