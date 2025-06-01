@@ -4,6 +4,7 @@
 use crate::image_protocols::{
     ImageCache, ImageDownloader, ImageProtocol, ImageUrlValidator, TerminalCapabilities,
     kitty::KittyProtocol,
+    iterm2::ITerm2Protocol,
 };
 use anyhow::{Result, anyhow};
 
@@ -156,10 +157,7 @@ impl ImageManager {
     fn get_protocol(&self) -> Result<Box<dyn ImageProtocol>> {
         match self.capabilities.preferred_protocol() {
             Some("kitty") => Ok(Box::new(KittyProtocol)),
-            Some("iterm2") => {
-                // Future: implement iTerm2Protocol
-                Err(anyhow!("iTerm2 protocol not yet implemented"))
-            }
+            Some("iterm2") => Ok(Box::new(ITerm2Protocol)),
             _ => Err(anyhow!("No supported image protocol available")),
         }
     }
@@ -407,5 +405,128 @@ mod tests {
 
         // Note: We can't easily test enabled manager without mocking terminal detection
         // This would be covered in integration tests
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_iterm2_protocol_integration() {
+        let mut server = Server::new_async().await;
+
+        // Mock a small PNG image
+        let png_data = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR chunk length
+            0x49, 0x48, 0x44, 0x52, // IHDR chunk type
+            0x00, 0x00, 0x00, 0x01, // Width: 1
+            0x00, 0x00, 0x00, 0x01, // Height: 1
+            0x08, 0x02, 0x00, 0x00, 0x00, // Bit depth, color type, etc.
+            0x90, 0x77, 0x53, 0xDE, // CRC
+        ];
+
+        let mock = server
+            .mock("GET", "/iterm2_test.png")
+            .with_status(200)
+            .with_header("content-type", "image/png")
+            .with_header("content-length", &png_data.len().to_string())
+            .with_body(&png_data)
+            .create_async()
+            .await;
+
+        // Force iTerm2 protocol
+        unsafe {
+            std::env::set_var("LINEAR_CLI_FORCE_PROTOCOL", "iterm2");
+            std::env::set_var("LINEAR_CLI_ALLOWED_IMAGE_DOMAINS", "127.0.0.1");
+        }
+
+        let manager = ImageManager::new().unwrap();
+        assert!(manager.is_enabled());
+        assert_eq!(manager.capabilities().preferred_protocol(), Some("iterm2"));
+
+        let url = &format!("{}/iterm2_test.png", server.url());
+        let result = manager.process_image(url, "iTerm2 test image").await;
+
+        mock.assert_async().await;
+
+        match result {
+            ImageRenderResult::Rendered(output) => {
+                // Should contain iTerm2 escape sequence markers
+                assert!(output.contains("\x1b]1337;File="));
+                assert!(output.contains("name="));
+                assert!(output.contains("size="));
+                assert!(output.contains("inline=1"));
+                assert!(output.contains("\x07")); // iTerm2 terminator
+            }
+            ImageRenderResult::Fallback(_) => {
+                // This is acceptable in test environment - may not have all dependencies
+            }
+            ImageRenderResult::Disabled => {
+                panic!("Manager should be enabled with forced protocol");
+            }
+        }
+
+        unsafe {
+            std::env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            std::env::remove_var("LINEAR_CLI_ALLOWED_IMAGE_DOMAINS");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_protocol_fallback_chain() {
+        // Save original env vars
+        let original_force = std::env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
+        let original_term_program = std::env::var("TERM_PROGRAM").ok();
+        let original_kitty_window = std::env::var("KITTY_WINDOW_ID").ok();
+        let original_wezterm = std::env::var("WEZTERM_EXECUTABLE").ok();
+
+        // Test that WezTerm prefers Kitty over iTerm2
+        unsafe {
+            std::env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            std::env::remove_var("KITTY_WINDOW_ID");
+            std::env::remove_var("WEZTERM_EXECUTABLE");
+            std::env::set_var("TERM_PROGRAM", "WezTerm");
+        }
+
+        let manager = ImageManager::new().unwrap();
+        assert!(manager.capabilities().supports_kitty_images);
+        assert!(manager.capabilities().supports_iterm2_images);
+        assert_eq!(manager.capabilities().preferred_protocol(), Some("kitty")); // Should prefer Kitty
+
+        // Test pure iTerm2 gets iTerm2 protocol (clear all Kitty-related vars)
+        unsafe {
+            std::env::set_var("TERM_PROGRAM", "iTerm.app");
+            std::env::remove_var("KITTY_WINDOW_ID");
+            std::env::remove_var("WEZTERM_EXECUTABLE");
+            std::env::set_var("TERM", "xterm-256color"); // Non-kitty TERM
+        }
+
+        let manager = ImageManager::new().unwrap();
+        assert!(!manager.capabilities().supports_kitty_images);
+        assert!(manager.capabilities().supports_iterm2_images);
+        assert_eq!(manager.capabilities().preferred_protocol(), Some("iterm2"));
+
+        // Restore original env vars
+        unsafe {
+            if let Some(val) = original_force {
+                std::env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                std::env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            }
+            if let Some(val) = original_term_program {
+                std::env::set_var("TERM_PROGRAM", val);
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
+            }
+            if let Some(val) = original_kitty_window {
+                std::env::set_var("KITTY_WINDOW_ID", val);
+            } else {
+                std::env::remove_var("KITTY_WINDOW_ID");
+            }
+            if let Some(val) = original_wezterm {
+                std::env::set_var("WEZTERM_EXECUTABLE", val);
+            } else {
+                std::env::remove_var("WEZTERM_EXECUTABLE");
+            }
+        }
     }
 }

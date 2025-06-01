@@ -19,6 +19,7 @@ pub trait ImageProtocol {
 pub mod cache;
 pub mod detection;
 pub mod downloader;
+pub mod iterm2;
 pub mod kitty;
 pub mod manager;
 pub mod url_validator;

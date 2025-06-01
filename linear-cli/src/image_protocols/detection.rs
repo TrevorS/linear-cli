@@ -13,6 +13,11 @@ pub struct TerminalCapabilities {
 
 impl TerminalCapabilities {
     pub fn detect() -> Self {
+        // Check for user override first
+        if let Ok(forced_protocol) = env::var("LINEAR_CLI_FORCE_PROTOCOL") {
+            return Self::from_forced_protocol(&forced_protocol);
+        }
+
         let term_program = env::var("TERM_PROGRAM").unwrap_or_default();
         let term = env::var("TERM").unwrap_or_default();
         let wezterm_exe = env::var("WEZTERM_EXECUTABLE").ok();
@@ -28,6 +33,63 @@ impl TerminalCapabilities {
         // Sixel detection (future)
         let supports_sixel = false; // Not implementing initially
 
+        let terminal_name = determine_terminal_name(&term_program, &term);
+
+        Self {
+            supports_kitty_images: supports_kitty,
+            supports_iterm2_images: supports_iterm2,
+            supports_sixel,
+            terminal_name,
+        }
+    }
+
+    /// Create capabilities from forced protocol override
+    fn from_forced_protocol(protocol: &str) -> Self {
+        let terminal_name = format!("forced-{}", protocol);
+
+        match protocol.to_lowercase().as_str() {
+            "kitty" => Self {
+                supports_kitty_images: true,
+                supports_iterm2_images: false,
+                supports_sixel: false,
+                terminal_name,
+            },
+            "iterm2" => Self {
+                supports_kitty_images: false,
+                supports_iterm2_images: true,
+                supports_sixel: false,
+                terminal_name,
+            },
+            "sixel" => Self {
+                supports_kitty_images: false,
+                supports_iterm2_images: false,
+                supports_sixel: true,
+                terminal_name,
+            },
+            "none" | "disable" | "disabled" => Self {
+                supports_kitty_images: false,
+                supports_iterm2_images: false,
+                supports_sixel: false,
+                terminal_name,
+            },
+            _ => {
+                eprintln!("Warning: Unknown protocol '{}' in LINEAR_CLI_FORCE_PROTOCOL. Valid values: kitty, iterm2, sixel, none", protocol);
+                Self::detect_without_override()
+            }
+        }
+    }
+
+    /// Detect capabilities without checking override (used for fallback)
+    fn detect_without_override() -> Self {
+        let term_program = env::var("TERM_PROGRAM").unwrap_or_default();
+        let term = env::var("TERM").unwrap_or_default();
+        let wezterm_exe = env::var("WEZTERM_EXECUTABLE").ok();
+        let kitty_window_id = env::var("KITTY_WINDOW_ID").ok();
+
+        let supports_kitty =
+            detect_kitty_support(&term_program, &term, &wezterm_exe, &kitty_window_id);
+        let supports_iterm2 = detect_iterm2_support(&term_program, &term);
+        let supports_sixel = false;
         let terminal_name = determine_terminal_name(&term_program, &term);
 
         Self {
@@ -86,21 +148,32 @@ fn detect_kitty_support(
     false
 }
 
-fn detect_iterm2_support(term_program: &str, _term: &str) -> bool {
+fn detect_iterm2_support(term_program: &str, term: &str) -> bool {
     // iTerm2 itself
     if term_program == "iTerm.app" {
         return true;
     }
 
     // Terminals that support iTerm2 protocol
-    match term_program {
-        "WezTerm" => true, // WezTerm supports both
-        "mintty" => true,  // Windows terminal
-        "Hyper" => true,   // Electron-based terminal
-        _ => false,
+    if matches!(term_program,
+        "WezTerm" |     // WezTerm supports both Kitty and iTerm2
+        "mintty" |      // Windows terminal
+        "Hyper" |       // Electron-based terminal
+        "Warp" |        // Modern terminal with iTerm2 support
+        "Tabby" |       // Cross-platform terminal
+        "Terminus"      // Another modern terminal
+    ) {
+        return true;
     }
-    // Note: Many more terminals support iTerm2 than Kitty
-    // Could expand this list based on TERM checks
+
+    // Check TERM variable for iTerm2 patterns
+    if term.contains("iterm") || term.contains("iterm2") {
+        return true;
+    }
+
+    // Some terminals set TERM to xterm-256color but support iTerm2
+    // We could add more heuristics here based on other env vars
+    false
 }
 
 fn determine_terminal_name(term_program: &str, term: &str) -> String {
@@ -251,8 +324,10 @@ mod tests {
     fn test_no_support_detection() {
         let original_term_program = env::var("TERM_PROGRAM").ok();
         let original_term = env::var("TERM").ok();
+        let original_force = env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
 
         unsafe {
+            env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
             env::set_var("TERM_PROGRAM", "unsupported");
             env::set_var("TERM", "dumb");
         }
@@ -271,6 +346,136 @@ mod tests {
                 env::set_var("TERM", val);
             } else {
                 env::remove_var("TERM");
+            }
+            if let Some(val) = original_force {
+                env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_force_protocol_kitty() {
+        let original_force = env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
+        let original_term_program = env::var("TERM_PROGRAM").ok();
+
+        unsafe {
+            env::set_var("LINEAR_CLI_FORCE_PROTOCOL", "kitty");
+            env::set_var("TERM_PROGRAM", "unsupported"); // This should be ignored
+        }
+
+        let caps = TerminalCapabilities::detect();
+        assert!(caps.supports_kitty_images);
+        assert!(!caps.supports_iterm2_images);
+        assert_eq!(caps.preferred_protocol(), Some("kitty"));
+        assert_eq!(caps.terminal_name, "forced-kitty");
+
+        // Restore env
+        unsafe {
+            if let Some(val) = original_force {
+                env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            }
+            if let Some(val) = original_term_program {
+                env::set_var("TERM_PROGRAM", val);
+            } else {
+                env::remove_var("TERM_PROGRAM");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_force_protocol_iterm2() {
+        let original_force = env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
+
+        unsafe {
+            env::set_var("LINEAR_CLI_FORCE_PROTOCOL", "iterm2");
+        }
+
+        let caps = TerminalCapabilities::detect();
+        assert!(!caps.supports_kitty_images);
+        assert!(caps.supports_iterm2_images);
+        assert_eq!(caps.preferred_protocol(), Some("iterm2"));
+        assert_eq!(caps.terminal_name, "forced-iterm2");
+
+        // Restore env
+        unsafe {
+            if let Some(val) = original_force {
+                env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_force_protocol_none() {
+        let original_force = env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
+
+        unsafe {
+            env::set_var("LINEAR_CLI_FORCE_PROTOCOL", "none");
+        }
+
+        let caps = TerminalCapabilities::detect();
+        assert!(!caps.supports_inline_images());
+        assert_eq!(caps.preferred_protocol(), None);
+        assert_eq!(caps.terminal_name, "forced-none");
+
+        // Restore env
+        unsafe {
+            if let Some(val) = original_force {
+                env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_enhanced_iterm2_detection() {
+        let original_term_program = env::var("TERM_PROGRAM").ok();
+        let original_term = env::var("TERM").ok();
+        let original_force = env::var("LINEAR_CLI_FORCE_PROTOCOL").ok();
+
+        // Test Warp terminal
+        unsafe {
+            env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
+            env::set_var("TERM_PROGRAM", "Warp");
+            env::set_var("TERM", "xterm-256color");
+        }
+        let caps = TerminalCapabilities::detect();
+        assert!(caps.supports_iterm2_images);
+
+        // Test terminal with iTerm in TERM variable
+        unsafe {
+            env::set_var("TERM_PROGRAM", "");
+            env::set_var("TERM", "xterm-iterm2");
+        }
+        let caps = TerminalCapabilities::detect();
+        assert!(caps.supports_iterm2_images);
+
+        // Restore env
+        unsafe {
+            if let Some(val) = original_term_program {
+                env::set_var("TERM_PROGRAM", val);
+            } else {
+                env::remove_var("TERM_PROGRAM");
+            }
+            if let Some(val) = original_term {
+                env::set_var("TERM", val);
+            } else {
+                env::remove_var("TERM");
+            }
+            if let Some(val) = original_force {
+                env::set_var("LINEAR_CLI_FORCE_PROTOCOL", val);
+            } else {
+                env::remove_var("LINEAR_CLI_FORCE_PROTOCOL");
             }
         }
     }
