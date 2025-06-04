@@ -1972,10 +1972,14 @@ mod tests {
             .unwrap();
 
         // Test TTY detection logic
-        let prompter_with_tty = InteractivePrompter::new(&client).with_tty_override(true);
+        let prompter_with_tty = InteractivePrompter::new(&client)
+            .with_tty_override(true)
+            .with_ci_override(false);
         assert!(prompter_with_tty.should_prompt());
 
-        let prompter_without_tty = InteractivePrompter::new(&client).with_tty_override(false);
+        let prompter_without_tty = InteractivePrompter::new(&client)
+            .with_tty_override(false)
+            .with_ci_override(false);
         assert!(!prompter_without_tty.should_prompt());
     }
 

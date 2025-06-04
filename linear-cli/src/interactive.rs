@@ -26,12 +26,19 @@ pub struct CreateOptions {
 pub struct InteractivePrompter<'a> {
     client: &'a LinearClient,
     is_tty: bool,
+    #[cfg(test)]
+    ci_override: Option<bool>,
 }
 
 impl<'a> InteractivePrompter<'a> {
     pub fn new(client: &'a LinearClient) -> Self {
         let is_tty = std::io::stdin().is_terminal();
-        Self { client, is_tty }
+        Self {
+            client,
+            is_tty,
+            #[cfg(test)]
+            ci_override: None,
+        }
     }
 
     /// Check if interactive prompts should be used
@@ -41,6 +48,11 @@ impl<'a> InteractivePrompter<'a> {
 
     /// Check if running in CI environment
     fn is_in_ci(&self) -> bool {
+        #[cfg(test)]
+        if let Some(ci_override) = self.ci_override {
+            return ci_override;
+        }
+
         std::env::var("CI").is_ok()
             || std::env::var("GITHUB_ACTIONS").is_ok()
             || std::env::var("JENKINS_URL").is_ok()
@@ -51,6 +63,13 @@ impl<'a> InteractivePrompter<'a> {
     #[cfg(test)]
     pub fn with_tty_override(mut self, is_tty: bool) -> Self {
         self.is_tty = is_tty;
+        self
+    }
+
+    /// Test helper to override CI detection
+    #[cfg(test)]
+    pub fn with_ci_override(mut self, is_ci: bool) -> Self {
+        self.ci_override = Some(is_ci);
         self
     }
 
@@ -304,7 +323,9 @@ mod tests {
     #[test]
     fn test_should_prompt_with_tty() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(true);
+        let prompter = InteractivePrompter::new(&client)
+            .with_tty_override(true)
+            .with_ci_override(false);
 
         // Should prompt when TTY and not in CI
         assert!(prompter.should_prompt());
@@ -313,26 +334,20 @@ mod tests {
     #[test]
     fn test_should_not_prompt_in_ci() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(true);
-
-        // Set CI environment variable
-        unsafe {
-            std::env::set_var("CI", "true");
-        }
+        let prompter = InteractivePrompter::new(&client)
+            .with_tty_override(true)
+            .with_ci_override(true);
 
         // Should not prompt in CI even with TTY
         assert!(!prompter.should_prompt());
-
-        // Clean up
-        unsafe {
-            std::env::remove_var("CI");
-        }
     }
 
     #[test]
     fn test_should_not_prompt_without_tty() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(false);
+        let prompter = InteractivePrompter::new(&client)
+            .with_tty_override(false)
+            .with_ci_override(false);
 
         assert!(!prompter.should_prompt());
     }
