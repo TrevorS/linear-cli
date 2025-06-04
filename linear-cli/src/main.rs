@@ -11,6 +11,7 @@ use std::io::IsTerminal;
 
 mod cli_output;
 mod constants;
+mod interactive;
 mod output;
 mod types;
 
@@ -626,8 +627,7 @@ async fn handle_create_command(
     use_color: bool,
     is_interactive: bool,
 ) -> Result<()> {
-    // TODO: Implement interactive prompts and issue creation
-    // For now, just handle basic validation
+    use crate::interactive::{InteractivePrompter, CreateOptions};
 
     let cli = CliOutput::with_color(use_color);
 
@@ -651,47 +651,72 @@ async fn handle_create_command(
         return Ok(());
     }
 
-    // For now, require title and team
-    let title = args.title.ok_or_else(|| LinearError::InvalidInput {
-        message: "Title is required".to_string(),
-    })?;
+    // Determine if we need to use interactive prompts
+    let needs_prompts = args.title.is_none() || args.team.is_none();
+    let prompter = InteractivePrompter::new(client);
 
-    let team = args.team.ok_or_else(|| LinearError::InvalidInput {
-        message: "Team is required".to_string(),
-    })?;
+    let input = if needs_prompts && prompter.should_prompt() {
+        // Use interactive prompts for missing fields
+        let options = CreateOptions {
+            title: args.title,
+            description: args.description,
+            team: args.team,
+            assignee: args.assignee,
+            priority: args.priority,
+        };
 
-    // Convert team key to team_id using team resolution
-    let team_id = if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
-        // Looks like a UUID, use as-is
-        team.clone()
-    } else {
-        // Resolve team key to UUID
-        client.resolve_team_key_to_id(&team).await?
-    };
+        let interactive_input = prompter.collect_create_input(options).await?;
 
-    // Handle assignee_id conversion if needed
-    let assignee_id = if let Some(assignee) = args.assignee {
-        if assignee == "me" {
-            // Get current user ID
-            let viewer_data = client.execute_viewer_query().await?;
-            Some(viewer_data.viewer.id)
-        } else {
-            // For now, assume it's already a user ID
-            Some(assignee)
+        CreateIssueInput {
+            title: interactive_input.title,
+            description: interactive_input.description,
+            team_id: interactive_input.team_id,
+            assignee_id: interactive_input.assignee_id,
+            priority: interactive_input.priority,
         }
     } else {
-        None
+        // Non-interactive mode - require title and team
+        let title = args.title.ok_or_else(|| LinearError::InvalidInput {
+            message: "Title is required (use --title or run interactively)".to_string(),
+        })?;
+
+        let team = args.team.ok_or_else(|| LinearError::InvalidInput {
+            message: "Team is required (use --team or run interactively)".to_string(),
+        })?;
+
+        // Convert team key to team_id using team resolution
+        let team_id = if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+            // Looks like a UUID, use as-is
+            team.clone()
+        } else {
+            // Resolve team key to UUID
+            client.resolve_team_key_to_id(&team).await?
+        };
+
+        // Handle assignee_id conversion if needed
+        let assignee_id = if let Some(assignee) = args.assignee {
+            if assignee == "me" {
+                // Get current user ID
+                let viewer_data = client.execute_viewer_query().await?;
+                Some(viewer_data.viewer.id)
+            } else {
+                // For now, assume it's already a user ID
+                Some(assignee)
+            }
+        } else {
+            None
+        };
+
+        CreateIssueInput {
+            title,
+            description: args.description,
+            team_id,
+            assignee_id,
+            priority: args.priority,
+        }
     };
 
     let spinner = create_spinner("Creating issue...", is_interactive);
-
-    let input = CreateIssueInput {
-        title,
-        description: args.description,
-        team_id,
-        assignee_id,
-        priority: args.priority,
-    };
 
     match client.create_issue(input).await {
         Ok(issue) => {
@@ -1929,5 +1954,67 @@ mod tests {
                 .all(|c| c.is_ascii_hexdigit() || c == '-')
                 && short_string.len() > 20)
         );
+    }
+
+    #[test]
+    fn test_interactive_prompts_integration() {
+        use crate::interactive::InteractivePrompter;
+        use linear_sdk::LinearClient;
+        use secrecy::SecretString;
+
+        // Create a test client
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test_api_key".to_string().into_boxed_str()))
+            .build()
+            .unwrap();
+
+        // Test TTY detection logic
+        let prompter_with_tty = InteractivePrompter::new(&client).with_tty_override(true);
+        assert!(prompter_with_tty.should_prompt());
+
+        let prompter_without_tty = InteractivePrompter::new(&client).with_tty_override(false);
+        assert!(!prompter_without_tty.should_prompt());
+    }
+
+    #[test]
+    fn test_create_command_args_structure() {
+        // Test that CreateCommandArgs preserves all fields correctly
+        let args = CreateCommandArgs {
+            title: Some("Test Title".to_string()),
+            description: Some("Test Description".to_string()),
+            team: Some("ENG".to_string()),
+            assignee: Some("me".to_string()),
+            priority: Some(2),
+            open: true,
+            dry_run: false,
+        };
+
+        assert_eq!(args.title, Some("Test Title".to_string()));
+        assert_eq!(args.description, Some("Test Description".to_string()));
+        assert_eq!(args.team, Some("ENG".to_string()));
+        assert_eq!(args.assignee, Some("me".to_string()));
+        assert_eq!(args.priority, Some(2));
+        assert!(args.open);
+        assert!(!args.dry_run);
+    }
+
+    #[test]
+    fn test_create_options_structure() {
+        use crate::interactive::CreateOptions;
+
+        // Test that CreateOptions correctly maps from command args
+        let options = CreateOptions {
+            title: Some("Title".to_string()),
+            description: None,
+            team: Some("ENG".to_string()),
+            assignee: None,
+            priority: Some(1),
+        };
+
+        assert_eq!(options.title, Some("Title".to_string()));
+        assert_eq!(options.description, None);
+        assert_eq!(options.team, Some("ENG".to_string()));
+        assert_eq!(options.assignee, None);
+        assert_eq!(options.priority, Some(1));
     }
 }
