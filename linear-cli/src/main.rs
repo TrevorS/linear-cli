@@ -11,7 +11,10 @@ use std::io::IsTerminal;
 
 mod cli_output;
 mod constants;
+mod interactive;
 mod output;
+mod preferences;
+mod templates;
 mod types;
 
 #[cfg(feature = "inline-images")]
@@ -132,6 +135,36 @@ enum Commands {
         #[arg(long, conflicts_with = "no_images")]
         force_images: bool,
     },
+    /// Create a new issue
+    Create {
+        /// Issue title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Issue description
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Team key (e.g., ENG) or UUID
+        #[arg(long)]
+        team: Option<String>,
+
+        /// Assignee (use "me" for yourself)
+        #[arg(long)]
+        assignee: Option<String>,
+
+        /// Priority (1=Urgent, 2=High, 3=Normal, 4=Low)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
+        priority: Option<i64>,
+
+        /// Open the created issue in browser
+        #[arg(long)]
+        open: bool,
+
+        /// Show what would be created without actually creating it
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Check connection to Linear
     Status {
         /// Show detailed connection info
@@ -174,6 +207,16 @@ enum ImageAction {
     },
     /// Show detailed diagnostics about image capabilities
     Diagnostics,
+}
+
+struct CreateCommandArgs {
+    title: Option<String>,
+    description: Option<String>,
+    team: Option<String>,
+    assignee: Option<String>,
+    priority: Option<i64>,
+    open: bool,
+    dry_run: bool,
 }
 
 #[cfg(feature = "inline-images")]
@@ -664,6 +707,186 @@ fn main() -> Result<()> {
     }
 }
 
+async fn handle_create_command(
+    client: &LinearClient,
+    args: CreateCommandArgs,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    use crate::interactive::{CreateOptions, InteractivePrompter};
+
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Check if we need to collect input interactively
+    let needs_prompts = args.title.is_none() || args.team.is_none();
+
+    let input = if needs_prompts && is_interactive {
+        // Interactive mode with Phase 5 smart defaults and templates
+        let prompter = match InteractivePrompter::new_with_defaults(client) {
+            Ok(prompter) => prompter,
+            Err(e) => {
+                cli_output.error(&format!("Failed to initialize interactive prompter: {}", e));
+                std::process::exit(1);
+            }
+        };
+
+        if !prompter.should_prompt() {
+            cli_output.error("Interactive prompts are not available in this environment");
+            eprintln!("Please provide --title and --team arguments explicitly");
+            std::process::exit(1);
+        }
+
+        let options = CreateOptions {
+            title: args.title,
+            description: args.description,
+            team: args.team,
+            assignee: args.assignee,
+            priority: args.priority,
+        };
+
+        match prompter.collect_create_input(options).await {
+            Ok(input) => input,
+            Err(e) => {
+                cli_output.error(&format!("Failed to collect issue details: {}", e));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Non-interactive mode with validation
+        let title = match args.title {
+            Some(title) => title,
+            None => {
+                cli_output.error("Title is required for issue creation");
+                eprintln!(
+                    "Use --title \"Your issue title\" or run without arguments for interactive mode"
+                );
+                std::process::exit(1);
+            }
+        };
+
+        let team_id = match args.team {
+            Some(team) => {
+                // Enhanced team resolution - detect UUID vs team key
+                if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+                    // Looks like a UUID
+                    team
+                } else {
+                    // Assume it's a team key, resolve it
+                    match client.resolve_team_key_to_id(&team).await {
+                        Ok(team_id) => team_id,
+                        Err(e) => {
+                            cli_output.error(&format!("Failed to resolve team '{}': {}", team, e));
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            None => {
+                cli_output.error("Team is required for issue creation");
+                eprintln!("Use --team TEAM_KEY or run without arguments for interactive mode");
+                std::process::exit(1);
+            }
+        };
+
+        // Enhanced assignee resolution
+        let assignee_id = if let Some(assignee) = args.assignee {
+            if assignee.trim().is_empty() || assignee.eq_ignore_ascii_case("unassigned") {
+                None
+            } else if assignee.eq_ignore_ascii_case("me") {
+                let viewer_data = client.execute_viewer_query().await?;
+                Some(viewer_data.viewer.id)
+            } else {
+                // Could be UUID or email/name - pass as-is for now
+                Some(assignee)
+            }
+        } else {
+            None
+        };
+
+        crate::interactive::InteractiveCreateInput {
+            title,
+            description: args.description,
+            team_id,
+            assignee_id,
+            priority: args.priority,
+        }
+    };
+
+    // Handle dry-run mode
+    if args.dry_run {
+        cli_output.info("Dry run mode - no issue will be created");
+        println!();
+        println!("Would create issue:");
+        println!("  Title: {}", input.title);
+        if let Some(desc) = &input.description {
+            println!("  Description: {}", desc);
+        }
+        println!("  Team ID: {}", input.team_id);
+        if let Some(assignee_id) = &input.assignee_id {
+            println!("  Assignee ID: {}", assignee_id);
+        }
+        if let Some(priority) = input.priority {
+            println!("  Priority: {}", priority);
+        }
+        return Ok(());
+    }
+
+    // Build the SDK create input
+    let sdk_input = linear_sdk::CreateIssueInput {
+        title: input.title,
+        description: input.description,
+        team_id: Some(input.team_id),
+        assignee_id: input.assignee_id,
+        priority: input.priority,
+        label_ids: None, // Future enhancement
+    };
+
+    // Create the issue
+    let spinner = create_spinner("Creating issue...", is_interactive);
+    match client.create_issue(sdk_input).await {
+        Ok(created_issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!("Created issue: {}", created_issue.identifier));
+                println!("Title: {}", created_issue.title);
+                if let Some(desc) = &created_issue.description {
+                    println!("Description: {}", desc);
+                }
+                println!("Status: {}", created_issue.state.name);
+                if let Some(assignee) = &created_issue.assignee {
+                    println!("Assignee: {}", assignee.name);
+                }
+                if let Some(team) = &created_issue.team {
+                    println!("Team: {} ({})", team.name, team.key);
+                }
+                println!("URL: {}", created_issue.url);
+
+                // Handle --open flag
+                if args.open {
+                    println!();
+                    cli_output.info(&format!("Issue URL: {}", created_issue.url));
+                    cli_output.info("Please open this URL in your browser");
+                }
+            } else {
+                // Non-interactive: just print the identifier for scripting
+                println!("{}", created_issue.identifier);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
     // Authentication priority:
     // 1. LINEAR_API_KEY env var
@@ -955,6 +1178,26 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                 }
             }
         }
+        Commands::Create {
+            title,
+            description,
+            team,
+            assignee,
+            priority,
+            open,
+            dry_run,
+        } => {
+            let args = CreateCommandArgs {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            };
+            handle_create_command(&client, args, use_color, is_interactive).await?;
+        }
         Commands::Status { verbose } => {
             let spinner = create_spinner("Checking Linear connection...", is_interactive);
             match client.execute_viewer_query().await {
@@ -1070,6 +1313,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1093,6 +1337,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1116,6 +1361,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1139,6 +1385,7 @@ mod tests {
                 assert!(!pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1162,6 +1409,7 @@ mod tests {
                 assert!(pretty);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1266,6 +1514,7 @@ mod tests {
                 assert_eq!(team, None);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1287,6 +1536,7 @@ mod tests {
                 assert_eq!(team, None);
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1308,6 +1558,7 @@ mod tests {
                 assert_eq!(team, Some("ENG".to_string()));
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1339,6 +1590,7 @@ mod tests {
                 assert_eq!(team, Some("ENG".to_string()));
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1393,6 +1645,12 @@ mod tests {
         match cli.command {
             Commands::Status { .. } => {} // Success - parsing works without auth
             _ => panic!("Expected Status command"),
+        }
+
+        let cli = Cli::try_parse_from(["linear", "create", "--title", "Test"]).unwrap();
+        match cli.command {
+            Commands::Create { .. } => {} // Success - parsing works without auth
+            _ => panic!("Expected Create command"),
         }
     }
 

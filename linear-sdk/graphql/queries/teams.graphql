@@ -1,0 +1,19 @@
+query ListTeams($first: Int!) {
+  teams(first: $first) {
+    nodes {
+      id
+      key
+      name
+      description
+      members {
+        nodes {
+          id
+          name
+          displayName
+          email
+          active
+        }
+      }
+    }
+  }
+}
