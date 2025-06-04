@@ -5,6 +5,7 @@ use graphql_client::{GraphQLQuery, Response};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::sync::RwLock;
 
 pub mod builder;
 pub mod constants;
@@ -81,6 +82,16 @@ pub struct GetIssue;
 )]
 pub struct CreateIssue;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/teams.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeams;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -149,6 +160,15 @@ pub struct IssueLabel {
     pub color: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Team {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CreateIssueInput {
     pub title: String,
@@ -165,6 +185,7 @@ pub struct LinearClient {
     pub(crate) verbose: bool,
     pub(crate) retry_config: retry::RetryConfig,
     _max_retries: usize,
+    teams_cache: RwLock<Option<Vec<Team>>>,
 }
 
 pub struct IssueFilters {
@@ -213,6 +234,7 @@ impl LinearClient {
             verbose: config.verbose,
             retry_config,
             _max_retries: config.max_retries,
+            teams_cache: RwLock::new(None),
         })
     }
 
@@ -739,6 +761,80 @@ impl LinearClient {
             updated_at: issue.updated_at,
             url: issue.url,
         })
+    }
+
+    pub async fn list_teams(&self) -> Result<Vec<Team>> {
+        // Check cache first
+        {
+            let cache = self.teams_cache.read().unwrap();
+            if let Some(ref teams) = *cache {
+                if self.verbose {
+                    log::debug!("Using cached teams data ({} teams)", teams.len());
+                }
+                return Ok(teams.clone());
+            }
+        }
+
+        if self.verbose {
+            log::debug!("Fetching teams from API (cache miss)");
+        }
+
+        let variables = list_teams::Variables {
+            first: 100, // Reasonable limit for teams
+        };
+
+        let data = self.execute_graphql::<ListTeams, _>(variables).await?;
+        let teams: Vec<Team> = data
+            .teams
+            .nodes
+            .into_iter()
+            .map(|team| Team {
+                id: team.id,
+                key: team.key,
+                name: team.name,
+                description: team.description,
+            })
+            .collect();
+
+        // Update cache
+        {
+            let mut cache = self.teams_cache.write().unwrap();
+            *cache = Some(teams.clone());
+            if self.verbose {
+                log::debug!("Cached {} teams", teams.len());
+            }
+        }
+
+        Ok(teams)
+    }
+
+    pub async fn resolve_team_key_to_id(&self, team_key: &str) -> Result<String> {
+        let teams = self.list_teams().await?;
+
+        for team in &teams {
+            if team.key.eq_ignore_ascii_case(team_key) {
+                return Ok(team.id.clone());
+            }
+        }
+
+        // If not found, provide helpful error with available teams
+        let available_teams: Vec<String> = teams.iter().map(|t| t.key.clone()).collect();
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Team '{}' not found. Available teams: {}",
+                team_key,
+                available_teams.join(", ")
+            ),
+        })
+    }
+
+    /// Clear the teams cache (useful for testing or when teams change)
+    pub fn clear_teams_cache(&self) {
+        let mut cache = self.teams_cache.write().unwrap();
+        *cache = None;
+        if self.verbose {
+            log::debug!("Teams cache cleared");
+        }
     }
 }
 
@@ -1538,5 +1634,188 @@ mod tests {
         assert_eq!(input.team_id, "ENG-TEAM");
         assert_eq!(input.assignee_id, Some("user-123".to_string()));
         assert_eq!(input.priority, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_list_teams_success() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+        let result = client.list_teams().await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let teams = result.unwrap();
+        assert_eq!(teams.len(), 3);
+
+        assert_eq!(teams[0].id, "team-eng-uuid");
+        assert_eq!(teams[0].key, "ENG");
+        assert_eq!(teams[0].name, "Engineering");
+        assert_eq!(
+            teams[0].description,
+            Some("Engineering team responsible for product development".to_string())
+        );
+
+        assert_eq!(teams[1].id, "team-design-uuid");
+        assert_eq!(teams[1].key, "DESIGN");
+        assert_eq!(teams[1].name, "Design");
+
+        assert_eq!(teams[2].id, "team-qa-uuid");
+        assert_eq!(teams[2].key, "QA");
+        assert_eq!(teams[2].name, "Quality Assurance");
+        assert_eq!(teams[2].description, None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_team_key_to_id_success() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let result = client.resolve_team_key_to_id("ENG").await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "team-eng-uuid");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_team_key_to_id_case_insensitive() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test lowercase
+        let result = client.resolve_team_key_to_id("eng").await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "team-eng-uuid");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_team_key_to_id_not_found() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let result = client.resolve_team_key_to_id("INVALID").await;
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        if let LinearError::InvalidInput { message } = error {
+            assert!(message.contains("Team 'INVALID' not found"));
+            assert!(message.contains("Available teams: ENG, DESIGN, QA"));
+        } else {
+            panic!("Expected InvalidInput error");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_teams_caching() {
+        let mut server = mock_linear_server().await;
+
+        // The mock should only be called once due to caching
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .expect(1) // Should only be called once due to caching
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .verbose(true)
+            .build()
+            .unwrap();
+
+        // First call - should hit the API
+        let result1 = client.list_teams().await;
+        assert!(result1.is_ok());
+        let teams1 = result1.unwrap();
+        assert_eq!(teams1.len(), 3);
+
+        // Second call - should use cache
+        let result2 = client.list_teams().await;
+        assert!(result2.is_ok());
+        let teams2 = result2.unwrap();
+        assert_eq!(teams2.len(), 3);
+        assert_eq!(teams1[0].id, teams2[0].id);
+
+        // Clear cache and call again - should hit API again
+        client.clear_teams_cache();
+
+        // We need to add another expectation since the cache was cleared
+        let mock2 = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_teams_response().to_string())
+            .expect(1)
+            .create();
+
+        let result3 = client.list_teams().await;
+        assert!(result3.is_ok());
+        let teams3 = result3.unwrap();
+        assert_eq!(teams3.len(), 3);
+
+        mock.assert();
+        mock2.assert();
     }
 }

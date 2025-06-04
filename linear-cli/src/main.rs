@@ -161,7 +161,7 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
-        /// Team key (e.g., ENG, DESIGN)
+        /// Team key (e.g., ENG, DESIGN) or team UUID
         #[arg(long)]
         team: Option<String>,
 
@@ -660,8 +660,14 @@ async fn handle_create_command(
         message: "Team is required".to_string(),
     })?;
 
-    // Convert team to team_id (simplified for now - assume team is already team key)
-    let team_id = team.clone();
+    // Convert team key to team_id using team resolution
+    let team_id = if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+        // Looks like a UUID, use as-is
+        team.clone()
+    } else {
+        // Resolve team key to UUID
+        client.resolve_team_key_to_id(&team).await?
+    };
 
     // Handle assignee_id conversion if needed
     let assignee_id = if let Some(assignee) = args.assignee {
@@ -1899,5 +1905,29 @@ mod tests {
         assert!(args.iter().any(|&id| id == "priority"));
         assert!(args.iter().any(|&id| id == "open"));
         assert!(args.iter().any(|&id| id == "dry_run"));
+    }
+
+    #[test]
+    fn test_team_id_uuid_detection() {
+        // Test UUID detection logic
+        let uuid_like = "550e8400-e29b-41d4-a716-446655440000";
+        let team_key = "ENG";
+        let short_string = "abc";
+
+        // UUID-like strings should be detected
+        assert!(
+            uuid_like.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && uuid_like.len() > 20
+        );
+
+        // Team keys should not be detected as UUIDs
+        assert!(
+            !(team_key.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team_key.len() > 20)
+        );
+        assert!(
+            !(short_string
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-')
+                && short_string.len() > 20)
+        );
     }
 }

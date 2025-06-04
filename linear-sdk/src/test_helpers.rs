@@ -260,3 +260,33 @@ pub fn mock_create_issue_failure_response() -> serde_json::Value {
         }
     })
 }
+
+#[cfg(test)]
+pub fn mock_teams_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "teams": {
+                "nodes": [
+                    {
+                        "id": "team-eng-uuid",
+                        "key": "ENG",
+                        "name": "Engineering",
+                        "description": "Engineering team responsible for product development"
+                    },
+                    {
+                        "id": "team-design-uuid",
+                        "key": "DESIGN",
+                        "name": "Design",
+                        "description": "Product design and user experience"
+                    },
+                    {
+                        "id": "team-qa-uuid",
+                        "key": "QA",
+                        "name": "Quality Assurance",
+                        "description": null
+                    }
+                ]
+            }
+        }
+    })
+}
