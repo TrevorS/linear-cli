@@ -11,6 +11,7 @@ use std::io::IsTerminal;
 
 mod cli_output;
 mod constants;
+mod interactive;
 mod output;
 mod types;
 

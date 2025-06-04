@@ -1,0 +1,12 @@
+query ListUsers($first: Int!, $filter: UserFilter) {
+  users(first: $first, filter: $filter) {
+    nodes {
+      id
+      name
+      displayName
+      email
+      active
+      guest
+    }
+  }
+}

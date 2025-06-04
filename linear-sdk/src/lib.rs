@@ -68,6 +68,26 @@ pub struct ListIssues;
 )]
 pub struct GetIssue;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/users.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListUsers;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/teams.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeams;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -134,6 +154,27 @@ pub struct IssueProject {
 pub struct IssueLabel {
     pub name: String,
     pub color: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+    pub id: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub active: bool,
+    pub guest: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Team {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub members: Vec<User>,
 }
 
 pub struct LinearClient {
@@ -629,6 +670,172 @@ impl LinearClient {
             created_at: issue.created_at,
             updated_at: issue.updated_at,
             url: issue.url,
+        })
+    }
+
+    pub async fn list_users(&self, limit: i32) -> Result<Vec<User>> {
+        self.list_users_filtered(limit, None).await
+    }
+
+    pub async fn list_users_filtered(
+        &self,
+        limit: i32,
+        filter: Option<list_users::UserFilter>,
+    ) -> Result<Vec<User>> {
+        let variables = list_users::Variables {
+            first: limit as i64,
+            filter,
+        };
+
+        let data = self.execute_graphql::<ListUsers, _>(variables).await?;
+        let users = data
+            .users
+            .nodes
+            .into_iter()
+            .map(|user| User {
+                id: user.id,
+                name: user.name,
+                display_name: Some(user.display_name),
+                email: user.email,
+                active: user.active,
+                guest: user.guest,
+            })
+            .collect();
+        Ok(users)
+    }
+
+    pub async fn list_teams(&self) -> Result<Vec<Team>> {
+        let variables = list_teams::Variables {
+            first: 100, // Get up to 100 teams
+        };
+
+        let data = self.execute_graphql::<ListTeams, _>(variables).await?;
+        let teams = data
+            .teams
+            .nodes
+            .into_iter()
+            .map(|team| Team {
+                id: team.id,
+                key: team.key,
+                name: team.name,
+                description: team.description,
+                members: team
+                    .members
+                    .nodes
+                    .into_iter()
+                    .map(|member| User {
+                        id: member.id,
+                        name: member.name,
+                        display_name: Some(member.display_name),
+                        email: member.email,
+                        active: member.active,
+                        guest: false, // Team members are not guests by default
+                    })
+                    .collect(),
+            })
+            .collect();
+        Ok(teams)
+    }
+
+    /// Search for users by name, email, or display name
+    pub async fn search_users(&self, query: &str, limit: i32) -> Result<Vec<User>> {
+        use list_users::*;
+
+        // Create user filter to search by name, email, or display name
+        let user_filter = UserFilter {
+            id: None,
+            created_at: None,
+            updated_at: None,
+            name: Some(StringComparator {
+                eq: None,
+                neq: None,
+                in_: None,
+                nin: None,
+                eq_ignore_case: None,
+                neq_ignore_case: None,
+                starts_with: None,
+                starts_with_ignore_case: None,
+                not_starts_with: None,
+                ends_with: None,
+                not_ends_with: None,
+                contains: Some(query.to_string()),
+                contains_ignore_case: Some(query.to_string()),
+                not_contains: None,
+                not_contains_ignore_case: None,
+                contains_ignore_case_and_accent: None,
+            }),
+            display_name: Some(StringComparator {
+                eq: None,
+                neq: None,
+                in_: None,
+                nin: None,
+                eq_ignore_case: None,
+                neq_ignore_case: None,
+                starts_with: None,
+                starts_with_ignore_case: None,
+                not_starts_with: None,
+                ends_with: None,
+                not_ends_with: None,
+                contains: Some(query.to_string()),
+                contains_ignore_case: Some(query.to_string()),
+                not_contains: None,
+                not_contains_ignore_case: None,
+                contains_ignore_case_and_accent: None,
+            }),
+            email: Some(StringComparator {
+                eq: None,
+                neq: None,
+                in_: None,
+                nin: None,
+                eq_ignore_case: None,
+                neq_ignore_case: None,
+                starts_with: None,
+                starts_with_ignore_case: None,
+                not_starts_with: None,
+                ends_with: None,
+                not_ends_with: None,
+                contains: Some(query.to_string()),
+                contains_ignore_case: Some(query.to_string()),
+                not_contains: None,
+                not_contains_ignore_case: None,
+                contains_ignore_case_and_accent: None,
+            }),
+            active: Some(BooleanComparator {
+                eq: Some(true),
+                neq: None,
+            }),
+            admin: None,
+            invited: None,
+            app: None,
+            is_me: None,
+            assigned_issues: Box::new(None),
+            and: Box::new(None),
+            or: Box::new(None),
+        };
+
+        self.list_users_filtered(limit, Some(user_filter)).await
+    }
+
+    /// Resolve team key to team ID (Phase 1 functionality - already implemented)
+    pub async fn resolve_team_key_to_id(&self, team_key: &str) -> Result<String> {
+        let teams = self.list_teams().await?;
+
+        for team in &teams {
+            if team.key.eq_ignore_ascii_case(team_key) {
+                return Ok(team.id.clone());
+            }
+        }
+
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Team '{}' not found. Available teams: {}",
+                team_key,
+                teams
+                    .iter()
+                    .map(|t| t.key.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         })
     }
 }
