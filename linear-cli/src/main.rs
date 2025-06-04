@@ -627,7 +627,7 @@ async fn handle_create_command(
     use_color: bool,
     is_interactive: bool,
 ) -> Result<()> {
-    use crate::interactive::{InteractivePrompter, CreateOptions};
+    use crate::interactive::{CreateOptions, InteractivePrompter};
 
     let cli = CliOutput::with_color(use_color);
 
@@ -685,7 +685,8 @@ async fn handle_create_command(
         })?;
 
         // Convert team key to team_id using team resolution
-        let team_id = if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+        let team_id = if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20
+        {
             // Looks like a UUID, use as-is
             team.clone()
         } else {
@@ -1964,7 +1965,9 @@ mod tests {
 
         // Create a test client
         let client = LinearClient::builder()
-            .auth_token(SecretString::new("test_api_key".to_string().into_boxed_str()))
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
             .build()
             .unwrap();
 

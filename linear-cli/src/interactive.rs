@@ -1,8 +1,8 @@
 // ABOUTME: Interactive prompts for collecting missing command-line arguments
 // ABOUTME: Provides user-friendly terminal-based input for the create command
 
-use dialoguer::{Input, Select, Confirm, Editor};
-use linear_sdk::{LinearClient, Result as SdkResult, LinearError};
+use dialoguer::{Confirm, Editor, Input, Select};
+use linear_sdk::{LinearClient, LinearError, Result as SdkResult};
 use std::io::IsTerminal;
 
 #[derive(Debug, Clone)]
@@ -55,7 +55,10 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Collect all missing fields interactively
-    pub async fn collect_create_input(&self, options: CreateOptions) -> SdkResult<InteractiveCreateInput> {
+    pub async fn collect_create_input(
+        &self,
+        options: CreateOptions,
+    ) -> SdkResult<InteractiveCreateInput> {
         if !self.should_prompt() {
             return Err(LinearError::InvalidInput {
                 message: "Interactive prompts not available in non-TTY environment".to_string(),
@@ -240,13 +243,7 @@ impl<'a> InteractivePrompter<'a> {
 
     /// Prompt for priority
     fn prompt_priority(&self) -> SdkResult<Option<i64>> {
-        let priorities = vec![
-            "None",
-            "1 - Urgent",
-            "2 - High",
-            "3 - Normal",
-            "4 - Low",
-        ];
+        let priorities = vec!["None", "1 - Urgent", "2 - High", "3 - Normal", "4 - Low"];
 
         let selection = Select::new()
             .with_prompt("Priority")
@@ -297,7 +294,9 @@ mod tests {
 
     fn create_test_client() -> LinearClient {
         LinearClient::builder()
-            .auth_token(SecretString::new("test_api_key".to_string().into_boxed_str()))
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
             .build()
             .unwrap()
     }
