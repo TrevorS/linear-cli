@@ -4,8 +4,81 @@
 use crate::preferences::{ContextDefaults, PreferencesManager};
 use crate::templates::TemplateManager;
 use dialoguer::{Confirm, Editor, Input, Select};
-use linear_sdk::{LinearClient, LinearError, Result as SdkResult};
+use linear_sdk::{LinearClient, LinearError, Result as SdkResult, Team, User};
+use std::collections::HashMap;
 use std::io::IsTerminal;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+/// Cache for team and user data to improve performance
+#[derive(Debug, Clone)]
+struct CachedData<T> {
+    data: T,
+    cached_at: Instant,
+}
+
+impl<T> CachedData<T> {
+    fn new(data: T) -> Self {
+        Self {
+            data,
+            cached_at: Instant::now(),
+        }
+    }
+
+    fn is_expired(&self, ttl: Duration) -> bool {
+        self.cached_at.elapsed() > ttl
+    }
+}
+
+/// Performance cache for API data
+#[derive(Debug)]
+struct PerformanceCache {
+    teams: Arc<RwLock<Option<CachedData<Vec<Team>>>>>,
+    users: Arc<RwLock<HashMap<String, CachedData<Vec<User>>>>>, // keyed by search query
+    ttl: Duration,
+}
+
+impl PerformanceCache {
+    fn new() -> Self {
+        Self {
+            teams: Arc::new(RwLock::new(None)),
+            users: Arc::new(RwLock::new(HashMap::new())),
+            ttl: Duration::from_secs(300), // 5 minutes cache
+        }
+    }
+
+    fn get_teams(&self) -> Option<Vec<Team>> {
+        let cache = self.teams.read().ok()?;
+        if let Some(cached) = cache.as_ref() {
+            if !cached.is_expired(self.ttl) {
+                return Some(cached.data.clone());
+            }
+        }
+        None
+    }
+
+    fn set_teams(&self, teams: Vec<Team>) {
+        if let Ok(mut cache) = self.teams.write() {
+            *cache = Some(CachedData::new(teams));
+        }
+    }
+
+    fn get_users(&self, query: &str) -> Option<Vec<User>> {
+        let cache = self.users.read().ok()?;
+        if let Some(cached) = cache.get(query) {
+            if !cached.is_expired(self.ttl) {
+                return Some(cached.data.clone());
+            }
+        }
+        None
+    }
+
+    fn set_users(&self, query: &str, users: Vec<User>) {
+        if let Ok(mut cache) = self.users.write() {
+            cache.insert(query.to_string(), CachedData::new(users));
+        }
+    }
+}
 
 #[allow(dead_code)] // Phase 3 development - will be integrated in next commit
 #[derive(Debug, Clone)]
@@ -33,6 +106,7 @@ pub struct InteractivePrompter<'a> {
     is_tty: bool,
     preferences_manager: PreferencesManager,
     template_manager: TemplateManager,
+    cache: PerformanceCache,
 }
 
 #[allow(dead_code)]
@@ -44,12 +118,14 @@ impl<'a> InteractivePrompter<'a> {
                 message: format!("Failed to initialize preferences: {}", e),
             })?;
         let template_manager = TemplateManager::new();
+        let cache = PerformanceCache::new();
 
         Ok(Self {
             client,
             is_tty,
             preferences_manager,
             template_manager,
+            cache,
         })
     }
 
@@ -71,6 +147,47 @@ impl<'a> InteractivePrompter<'a> {
     pub fn with_tty_override(mut self, is_tty: bool) -> Self {
         self.is_tty = is_tty;
         self
+    }
+
+    /// Get teams with caching for improved performance
+    async fn get_teams_cached(&self) -> SdkResult<Vec<Team>> {
+        // Try cache first
+        if let Some(teams) = self.cache.get_teams() {
+            log::debug!("Using cached teams data ({} teams)", teams.len());
+            return Ok(teams);
+        }
+
+        // Cache miss, fetch from API
+        log::debug!("Cache miss, fetching teams from API");
+        let teams = self.client.list_teams().await?;
+        self.cache.set_teams(teams.clone());
+        log::debug!("Cached {} teams for future use", teams.len());
+        Ok(teams)
+    }
+
+    /// Search users with caching for improved performance
+    async fn search_users_cached(&self, query: &str, limit: i32) -> SdkResult<Vec<User>> {
+        // Try cache first
+        let cache_key = format!("{}:{}", query, limit);
+        if let Some(users) = self.cache.get_users(&cache_key) {
+            log::debug!(
+                "Using cached user search results for '{}' ({} users)",
+                query,
+                users.len()
+            );
+            return Ok(users);
+        }
+
+        // Cache miss, fetch from API
+        log::debug!("Cache miss, searching users via API for query: '{}'", query);
+        let users = self.client.search_users(query, limit).await?;
+        self.cache.set_users(&cache_key, users.clone());
+        log::debug!(
+            "Cached {} users for query '{}' for future use",
+            users.len(),
+            query
+        );
+        Ok(users)
     }
 
     /// Create instance with smart defaults integration
@@ -248,7 +365,7 @@ impl<'a> InteractivePrompter<'a> {
         &self,
         context_defaults: &ContextDefaults,
     ) -> SdkResult<String> {
-        let teams = self.client.list_teams().await?;
+        let teams = self.get_teams_cached().await?;
 
         if teams.is_empty() {
             return Err(LinearError::InvalidInput {
@@ -486,7 +603,7 @@ impl<'a> InteractivePrompter<'a> {
 
     /// Prompt for team selection
     async fn prompt_team(&self) -> SdkResult<String> {
-        let teams = self.client.list_teams().await?;
+        let teams = self.get_teams_cached().await?;
 
         if teams.is_empty() {
             return Err(LinearError::InvalidInput {
@@ -598,8 +715,7 @@ impl<'a> InteractivePrompter<'a> {
 
         // Search for users
         let users = self
-            .client
-            .search_users(search_query, 10)
+            .search_users_cached(search_query, 10)
             .await
             .map_err(|e| LinearError::InvalidInput {
                 message: format!("Failed to search users: {}", e),
@@ -654,7 +770,7 @@ impl<'a> InteractivePrompter<'a> {
     /// Prompt for team member selection
     async fn prompt_team_members(&self, team_id: &str) -> SdkResult<Option<String>> {
         // Get teams to find the one with the specified ID
-        let teams = self.client.list_teams().await?;
+        let teams = self.get_teams_cached().await?;
         let team =
             teams
                 .iter()
@@ -745,23 +861,142 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Resolve team key or return team ID as-is if it's already a UUID
+    /// Enhanced with fuzzy matching and helpful error suggestions
     async fn resolve_team(&self, team: &str) -> SdkResult<String> {
         // Check if it looks like a UUID
         if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
-            Ok(team.to_string())
-        } else {
-            self.client.resolve_team_key_to_id(team).await
+            return Ok(team.to_string());
+        }
+
+        // Try exact resolution first
+        match self.client.resolve_team_key_to_id(team).await {
+            Ok(team_id) => Ok(team_id),
+            Err(_) => {
+                // Enhanced error handling with fuzzy matching suggestions
+                match self.suggest_similar_teams(team).await {
+                    Ok(suggestions) if !suggestions.is_empty() => {
+                        let suggestion_text = if suggestions.len() == 1 {
+                            format!("Did you mean '{}'?", suggestions[0])
+                        } else {
+                            format!("Did you mean one of: {}?", suggestions.join(", "))
+                        };
+
+                        Err(LinearError::InvalidInput {
+                            message: format!(
+                                "Team '{}' not found. {} Use 'linear teams' to list all teams.",
+                                team, suggestion_text
+                            ),
+                        })
+                    }
+                    _ => Err(LinearError::InvalidInput {
+                        message: format!(
+                            "Team '{}' not found. Use 'linear teams' to list all available teams.",
+                            team
+                        ),
+                    }),
+                }
+            }
         }
     }
 
+    /// Suggest similar team names using fuzzy matching
+    async fn suggest_similar_teams(&self, input: &str) -> SdkResult<Vec<String>> {
+        let teams = self.get_teams_cached().await?;
+        let input_lower = input.to_lowercase();
+
+        let mut suggestions = Vec::new();
+
+        // Look for teams that contain the input or are similar
+        for team in teams {
+            let team_key_lower = team.key.to_lowercase();
+            let team_name_lower = team.name.to_lowercase();
+
+            // Check for exact substring match (highest priority) or fuzzy match
+            let is_match = team_key_lower.contains(&input_lower)
+                || team_name_lower.contains(&input_lower)
+                || self.is_similar_string(&input_lower, &team_key_lower, 2);
+
+            if is_match {
+                suggestions.push(team.key);
+            }
+        }
+
+        // Limit suggestions to avoid overwhelming the user
+        suggestions.truncate(3);
+        Ok(suggestions)
+    }
+
+    /// Simple fuzzy string matching (Levenshtein-like with max distance)
+    fn is_similar_string(&self, input: &str, target: &str, max_distance: usize) -> bool {
+        // Convert to lowercase for case-insensitive matching
+        let input_lower = input.to_lowercase();
+        let target_lower = target.to_lowercase();
+
+        if input_lower.len().abs_diff(target_lower.len()) > max_distance {
+            return false;
+        }
+
+        let mut distance = 0;
+        let input_chars: Vec<char> = input_lower.chars().collect();
+        let target_chars: Vec<char> = target_lower.chars().collect();
+
+        let mut i = 0;
+        let mut j = 0;
+
+        while i < input_chars.len() && j < target_chars.len() {
+            if input_chars[i] == target_chars[j] {
+                i += 1;
+                j += 1;
+            } else {
+                distance += 1;
+                if distance > max_distance {
+                    return false;
+                }
+                // Try advancing both pointers to handle substitutions
+                i += 1;
+                j += 1;
+            }
+        }
+
+        // Account for remaining characters
+        distance += input_chars.len().saturating_sub(i) + target_chars.len().saturating_sub(j);
+        distance <= max_distance
+    }
+
     /// Resolve assignee (handle "me" or return as-is)
+    /// Enhanced with validation and helpful error messages
     async fn resolve_assignee(&self, assignee: &str) -> SdkResult<Option<String>> {
         if assignee == "me" {
-            let viewer_data = self.client.execute_viewer_query().await?;
-            Ok(Some(viewer_data.viewer.id))
+            match self.client.execute_viewer_query().await {
+                Ok(viewer_data) => Ok(Some(viewer_data.viewer.id)),
+                Err(e) => Err(LinearError::InvalidInput {
+                    message: format!(
+                        "Failed to resolve 'me' to current user: {}. Check your authentication.",
+                        e
+                    ),
+                }),
+            }
         } else if assignee.is_empty() || assignee == "unassigned" {
             Ok(None)
+        } else if assignee.contains('@') {
+            // Looks like an email, provide helpful message
+            Err(LinearError::InvalidInput {
+                message: format!(
+                    "User identifier '{}' looks like an email. Use the user's ID instead, or use interactive mode to search by email.",
+                    assignee
+                ),
+            })
+        } else if assignee.len() < 5 || assignee.chars().any(|c| c.is_whitespace()) {
+            // Too short or contains spaces, likely not a valid user ID
+            Err(LinearError::InvalidInput {
+                message: format!(
+                    "User identifier '{}' doesn't look like a valid user ID. Use 'linear create' without --assignee to search interactively, or use a full user ID.",
+                    assignee
+                ),
+            })
         } else {
+            // Assume it's a user ID and let the API validate it
+            // This preserves backwards compatibility while still catching obvious errors
             Ok(Some(assignee.to_string()))
         }
     }
@@ -784,12 +1019,14 @@ mod tests {
     fn create_test_prompter(client: &LinearClient) -> InteractivePrompter {
         let preferences_manager = PreferencesManager::new().unwrap();
         let template_manager = TemplateManager::new();
+        let cache = PerformanceCache::new();
 
         InteractivePrompter {
             client,
             is_tty: true,
             preferences_manager,
             template_manager,
+            cache,
         }
     }
 
@@ -960,5 +1197,90 @@ mod tests {
 
         let empty_query = "";
         assert!(empty_query.trim().is_empty()); // Should fail validation
+    }
+
+    #[test]
+    fn test_phase5_fuzzy_matching() {
+        let client = create_test_client();
+        let prompter = create_test_prompter(&client);
+
+        // Test exact match
+        assert!(prompter.is_similar_string("eng", "eng", 2));
+
+        // Test case insensitive matching
+        assert!(prompter.is_similar_string("eng", "ENG", 2));
+
+        // Test substitution (1 character difference)
+        assert!(prompter.is_similar_string("eng", "end", 2));
+
+        // Test too many differences
+        assert!(!prompter.is_similar_string("eng", "xyz", 2));
+
+        // Test length difference beyond threshold
+        assert!(!prompter.is_similar_string("a", "abcdef", 2));
+    }
+
+    #[tokio::test]
+    async fn test_phase5_enhanced_assignee_validation() {
+        let client = create_test_client();
+        let prompter = create_test_prompter(&client);
+
+        // Test email detection
+        let result = prompter.resolve_assignee("user@example.com").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("looks like an email")
+        );
+
+        // Test short invalid ID
+        let result = prompter.resolve_assignee("a").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("doesn't look like a valid user ID")
+        );
+
+        // Test whitespace in ID
+        let result = prompter.resolve_assignee("user 123").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("doesn't look like a valid user ID")
+        );
+
+        // Test valid-looking ID (should pass through)
+        let result = prompter.resolve_assignee("user-12345").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("user-12345".to_string()));
+    }
+
+    #[test]
+    fn test_phase5_cache_structure() {
+        let cache = PerformanceCache::new();
+
+        // Test that cache starts empty
+        assert!(cache.get_teams().is_none());
+        assert!(cache.get_users("test").is_none());
+
+        // Test cache TTL setting
+        assert_eq!(cache.ttl, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_phase5_cached_data_expiration() {
+        let data = CachedData::new("test".to_string());
+
+        // Should not be expired immediately
+        assert!(!data.is_expired(Duration::from_secs(1)));
+
+        // Test with zero TTL (should be expired)
+        assert!(data.is_expired(Duration::from_secs(0)));
     }
 }
