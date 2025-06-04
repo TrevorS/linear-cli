@@ -1,8 +1,8 @@
 // ABOUTME: Interactive prompts for collecting missing command-line arguments
 // ABOUTME: Provides user-friendly terminal-based input for the create command
 
-use dialoguer::{Input, Select, Confirm, Editor};
-use linear_sdk::{LinearClient, Result as SdkResult, LinearError};
+use dialoguer::{Confirm, Editor, Input, Select};
+use linear_sdk::{LinearClient, LinearError, Result as SdkResult};
 use std::io::IsTerminal;
 
 #[allow(dead_code)] // Phase 3 development - will be integrated in next commit
@@ -59,7 +59,10 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Collect all missing fields interactively
-    pub async fn collect_create_input(&self, options: CreateOptions) -> SdkResult<InteractiveCreateInput> {
+    pub async fn collect_create_input(
+        &self,
+        options: CreateOptions,
+    ) -> SdkResult<InteractiveCreateInput> {
         if !self.should_prompt() {
             return Err(LinearError::InvalidInput {
                 message: "Interactive prompts not available in non-TTY environment".to_string(),
@@ -89,7 +92,10 @@ impl<'a> InteractivePrompter<'a> {
         // Collect assignee (with team context for filtering)
         let assignee_id = match options.assignee {
             Some(assignee) => self.resolve_assignee(&assignee).await?,
-            None => self.prompt_assignee_with_team_context(Some(&team_id)).await?,
+            None => {
+                self.prompt_assignee_with_team_context(Some(&team_id))
+                    .await?
+            }
         };
 
         // Collect priority
@@ -203,11 +209,14 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Enhanced prompt for assignee with optional team context for filtering
-    async fn prompt_assignee_with_team_context(&self, team_id: Option<&str>) -> SdkResult<Option<String>> {
+    async fn prompt_assignee_with_team_context(
+        &self,
+        team_id: Option<&str>,
+    ) -> SdkResult<Option<String>> {
         let mut options = vec![
             "Assign to me",
             "Leave unassigned",
-            "Search for user by name/email"
+            "Search for user by name/email",
         ];
 
         // Add team-based suggestions if team is available
@@ -290,19 +299,30 @@ impl<'a> InteractivePrompter<'a> {
             })?;
 
         if users.is_empty() {
-            println!("No users found matching '{}'. Try a different search term.", search_query);
+            println!(
+                "No users found matching '{}'. Try a different search term.",
+                search_query
+            );
             return Ok(None);
         }
 
         // Display users for selection
         let mut user_options = vec!["Cancel - don't assign".to_string()];
         user_options.extend(users.iter().map(|user| {
-            format!("{} ({}) - {}", user.name, user.email,
-                if user.active { "Active" } else { "Inactive" })
+            format!(
+                "{} ({}) - {}",
+                user.name,
+                user.email,
+                if user.active { "Active" } else { "Inactive" }
+            )
         }));
 
         let selection = Select::new()
-            .with_prompt(format!("Found {} user(s) matching '{}'. Select one:", users.len(), search_query))
+            .with_prompt(format!(
+                "Found {} user(s) matching '{}'. Select one:",
+                users.len(),
+                search_query
+            ))
             .items(&user_options)
             .default(0)
             .interact()
@@ -315,7 +335,10 @@ impl<'a> InteractivePrompter<'a> {
         } else {
             let selected_user = &users[selection - 1];
             if !selected_user.active {
-                println!("Warning: Selected user '{}' is inactive.", selected_user.name);
+                println!(
+                    "Warning: Selected user '{}' is inactive.",
+                    selected_user.name
+                );
             }
             Ok(Some(selected_user.id.clone()))
         }
@@ -325,10 +348,13 @@ impl<'a> InteractivePrompter<'a> {
     async fn prompt_team_members(&self, team_id: &str) -> SdkResult<Option<String>> {
         // Get teams to find the one with the specified ID
         let teams = self.client.list_teams().await?;
-        let team = teams.iter().find(|t| t.id == team_id)
-            .ok_or_else(|| LinearError::InvalidInput {
-                message: format!("Team with ID '{}' not found", team_id),
-            })?;
+        let team =
+            teams
+                .iter()
+                .find(|t| t.id == team_id)
+                .ok_or_else(|| LinearError::InvalidInput {
+                    message: format!("Team with ID '{}' not found", team_id),
+                })?;
 
         if team.members.is_empty() {
             println!("No members found in team '{}'.", team.name);
@@ -338,8 +364,12 @@ impl<'a> InteractivePrompter<'a> {
         // Display team members for selection
         let mut member_options = vec!["Cancel - don't assign".to_string()];
         member_options.extend(team.members.iter().map(|member| {
-            format!("{} ({}) - {}", member.name, member.email,
-                if member.active { "Active" } else { "Inactive" })
+            format!(
+                "{} ({}) - {}",
+                member.name,
+                member.email,
+                if member.active { "Active" } else { "Inactive" }
+            )
         }));
 
         let selection = Select::new()
@@ -356,7 +386,10 @@ impl<'a> InteractivePrompter<'a> {
         } else {
             let selected_member = &team.members[selection - 1];
             if !selected_member.active {
-                println!("Warning: Selected user '{}' is inactive.", selected_member.name);
+                println!(
+                    "Warning: Selected user '{}' is inactive.",
+                    selected_member.name
+                );
             }
             Ok(Some(selected_member.id.clone()))
         }
@@ -383,13 +416,7 @@ impl<'a> InteractivePrompter<'a> {
 
     /// Prompt for priority
     fn prompt_priority(&self) -> SdkResult<Option<i64>> {
-        let priorities = vec![
-            "None",
-            "1 - Urgent",
-            "2 - High",
-            "3 - Normal",
-            "4 - Low",
-        ];
+        let priorities = vec!["None", "1 - Urgent", "2 - High", "3 - Normal", "4 - Low"];
 
         let selection = Select::new()
             .with_prompt("Priority")
@@ -440,7 +467,9 @@ mod tests {
 
     fn create_test_client() -> LinearClient {
         LinearClient::builder()
-            .auth_token(SecretString::new("test_api_key".to_string().into_boxed_str()))
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
             .build()
             .unwrap()
     }
