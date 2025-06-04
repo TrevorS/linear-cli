@@ -1,6 +1,8 @@
 // ABOUTME: Interactive prompts for collecting missing command-line arguments
 // ABOUTME: Provides user-friendly terminal-based input for the create command
 
+use crate::preferences::{ContextDefaults, PreferencesManager};
+use crate::templates::TemplateManager;
 use dialoguer::{Confirm, Editor, Input, Select};
 use linear_sdk::{LinearClient, LinearError, Result as SdkResult};
 use std::io::IsTerminal;
@@ -29,13 +31,26 @@ pub struct CreateOptions {
 pub struct InteractivePrompter<'a> {
     client: &'a LinearClient,
     is_tty: bool,
+    preferences_manager: PreferencesManager,
+    template_manager: TemplateManager,
 }
 
 #[allow(dead_code)]
 impl<'a> InteractivePrompter<'a> {
-    pub fn new(client: &'a LinearClient) -> Self {
+    pub fn new(client: &'a LinearClient) -> SdkResult<Self> {
         let is_tty = std::io::stdin().is_terminal();
-        Self { client, is_tty }
+        let preferences_manager =
+            PreferencesManager::new().map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to initialize preferences: {}", e),
+            })?;
+        let template_manager = TemplateManager::new();
+
+        Ok(Self {
+            client,
+            is_tty,
+            preferences_manager,
+            template_manager,
+        })
     }
 
     /// Check if interactive prompts should be used
@@ -58,6 +73,11 @@ impl<'a> InteractivePrompter<'a> {
         self
     }
 
+    /// Create instance with smart defaults integration
+    pub fn new_with_defaults(client: &'a LinearClient) -> SdkResult<Self> {
+        Self::new(client)
+    }
+
     /// Collect all missing fields interactively
     pub async fn collect_create_input(
         &self,
@@ -71,45 +91,332 @@ impl<'a> InteractivePrompter<'a> {
 
         println!("Creating a new Linear issue...\n");
 
-        // Collect title
+        // Get smart defaults and context
+        let context_defaults =
+            self.preferences_manager
+                .get_context_defaults()
+                .unwrap_or(ContextDefaults {
+                    suggested_team: None,
+                    suggested_title_prefix: None,
+                    suggested_assignee: None,
+                    branch_context: None,
+                });
+
+        // Show context if available
+        if let Some(branch) = &context_defaults.branch_context {
+            println!("📋 Detected Git branch: {}", branch);
+        }
+        if let Some(prefix) = &context_defaults.suggested_title_prefix {
+            println!("💡 Suggested title prefix: {}", prefix);
+        }
+        println!();
+
+        // Check if user wants to use a template
+        let template_result = self.prompt_template_selection()?;
+
+        // Collect title (with smart defaults)
         let title = match options.title {
             Some(title) => title,
-            None => self.prompt_title()?,
+            None => self.prompt_title_with_defaults(&context_defaults, &template_result)?,
         };
 
-        // Collect team
+        // Apply template if selected
+        let (final_title, template_description, template_priority) =
+            if let Some(template) = template_result {
+                let applied = self
+                    .template_manager
+                    .apply_template(&template, &title, "")
+                    .unwrap();
+                (
+                    applied.title,
+                    Some(applied.description),
+                    applied.suggested_priority,
+                )
+            } else {
+                (title, None, None)
+            };
+
+        // Collect team (with smart defaults)
         let team_id = match options.team {
             Some(team) => self.resolve_team(&team).await?,
-            None => self.prompt_team().await?,
+            None => self.prompt_team_with_defaults(&context_defaults).await?,
         };
 
-        // Collect description
+        // Collect description (considering template)
         let description = match options.description {
             Some(desc) => Some(desc),
-            None => self.prompt_description()?,
+            None => self.prompt_description_with_template(template_description)?,
         };
 
-        // Collect assignee (with team context for filtering)
+        // Collect assignee (with team context and smart defaults)
         let assignee_id = match options.assignee {
             Some(assignee) => self.resolve_assignee(&assignee).await?,
             None => {
-                self.prompt_assignee_with_team_context(Some(&team_id))
+                self.prompt_assignee_with_defaults(Some(&team_id), &context_defaults)
                     .await?
             }
         };
 
-        // Collect priority
+        // Collect priority (with template and smart defaults)
         let priority = match options.priority {
             Some(priority) => Some(priority),
-            None => self.prompt_priority()?,
+            None => self.prompt_priority_with_defaults(template_priority)?,
         };
 
+        // Save preferences for next time
+        let _ =
+            self.preferences_manager
+                .update_last_used(&team_id, assignee_id.as_deref(), priority);
+
         Ok(InteractiveCreateInput {
-            title,
+            title: final_title,
             description,
             team_id,
             assignee_id,
             priority,
+        })
+    }
+
+    /// Prompt for template selection
+    fn prompt_template_selection(&self) -> SdkResult<Option<String>> {
+        let use_template = Confirm::new()
+            .with_prompt("Would you like to use an issue template?")
+            .default(false)
+            .interact()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to read template choice: {}", e),
+            })?;
+
+        if !use_template {
+            return Ok(None);
+        }
+
+        let templates = self.template_manager.list_templates();
+        let mut template_options = vec!["None - continue without template".to_string()];
+        template_options.extend(templates.iter().map(|(_, name)| name.clone()));
+
+        let selection = Select::new()
+            .with_prompt("Select a template")
+            .items(&template_options)
+            .default(0)
+            .interact()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to select template: {}", e),
+            })?;
+
+        if selection == 0 {
+            Ok(None)
+        } else {
+            let template_key = &templates[selection - 1].0;
+            Ok(Some(template_key.clone()))
+        }
+    }
+
+    /// Prompt for title with smart defaults
+    fn prompt_title_with_defaults(
+        &self,
+        context_defaults: &ContextDefaults,
+        _template: &Option<String>,
+    ) -> SdkResult<String> {
+        let mut prompt = Input::new().with_prompt("Title");
+
+        // Set default based on context
+        if let Some(prefix) = &context_defaults.suggested_title_prefix {
+            prompt = prompt.default(prefix.clone());
+        }
+
+        let title: String = prompt
+            .validate_with(|input: &String| -> Result<(), &str> {
+                if input.trim().is_empty() {
+                    Err("Title cannot be empty")
+                } else if input.len() > 255 {
+                    Err("Title must be 255 characters or less")
+                } else {
+                    Ok(())
+                }
+            })
+            .interact_text()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to read title: {}", e),
+            })?;
+
+        Ok(title.trim().to_string())
+    }
+
+    /// Prompt for team with smart defaults
+    async fn prompt_team_with_defaults(
+        &self,
+        context_defaults: &ContextDefaults,
+    ) -> SdkResult<String> {
+        let teams = self.client.list_teams().await?;
+
+        if teams.is_empty() {
+            return Err(LinearError::InvalidInput {
+                message: "No teams found in your workspace".to_string(),
+            });
+        }
+
+        let team_names: Vec<String> = teams
+            .iter()
+            .map(|team| format!("{} ({})", team.name, team.key))
+            .collect();
+
+        // Find default selection based on context
+        let mut default_selection = 0;
+        if let Some(suggested_team) = &context_defaults.suggested_team {
+            for (i, team) in teams.iter().enumerate() {
+                if team.key.eq_ignore_ascii_case(suggested_team) || team.id == *suggested_team {
+                    default_selection = i;
+                    break;
+                }
+            }
+        }
+
+        let mut prompt_msg = "Select a team".to_string();
+        if default_selection > 0 {
+            prompt_msg = format!("Select a team (default: {})", teams[default_selection].key);
+        }
+
+        let selection = Select::new()
+            .with_prompt(&prompt_msg)
+            .items(&team_names)
+            .default(default_selection)
+            .interact()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to select team: {}", e),
+            })?;
+
+        Ok(teams[selection].id.clone())
+    }
+
+    /// Prompt for description with template support
+    fn prompt_description_with_template(
+        &self,
+        template_description: Option<String>,
+    ) -> SdkResult<Option<String>> {
+        if let Some(template_desc) = template_description {
+            let use_template_desc = Confirm::new()
+                .with_prompt("Use template description?")
+                .default(true)
+                .interact()
+                .map_err(|e| LinearError::InvalidInput {
+                    message: format!("Failed to read template description choice: {}", e),
+                })?;
+
+            if use_template_desc {
+                let description =
+                    Editor::new()
+                        .edit(&template_desc)
+                        .map_err(|e| LinearError::InvalidInput {
+                            message: format!("Failed to open editor: {}", e),
+                        })?;
+
+                return Ok(description.and_then(|d| {
+                    let trimmed = d.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                }));
+            }
+        }
+
+        // Fall back to regular description prompt
+        self.prompt_description()
+    }
+
+    /// Prompt for assignee with smart defaults
+    async fn prompt_assignee_with_defaults(
+        &self,
+        team_id: Option<&str>,
+        context_defaults: &ContextDefaults,
+    ) -> SdkResult<Option<String>> {
+        let mut options = vec!["Assign to me", "Leave unassigned"];
+
+        // Add suggestion from context if available
+        if context_defaults.suggested_assignee.is_some() {
+            options.insert(1, "Use suggested assignee");
+        }
+
+        options.extend(["Search for user by name/email"]);
+
+        // Add team-based suggestions if team is available
+        if team_id.is_some() {
+            options.insert(options.len() - 1, "Show team members");
+        }
+
+        options.push("Enter user ID directly");
+
+        let selection = Select::new()
+            .with_prompt("Assignee")
+            .items(&options)
+            .default(1) // Default to unassigned or suggested
+            .interact()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to select assignee: {}", e),
+            })?;
+
+        match selection {
+            0 => {
+                // Assign to current user
+                let viewer_data = self.client.execute_viewer_query().await?;
+                Ok(Some(viewer_data.viewer.id))
+            }
+            1 => {
+                if context_defaults.suggested_assignee.is_some() {
+                    // Use suggested assignee
+                    Ok(context_defaults.suggested_assignee.clone())
+                } else {
+                    // Leave unassigned
+                    Ok(None)
+                }
+            }
+            _ => {
+                // Handle other options (search, team members, direct input)
+                self.prompt_assignee_with_team_context(team_id).await
+            }
+        }
+    }
+
+    /// Prompt for priority with smart defaults
+    fn prompt_priority_with_defaults(
+        &self,
+        template_priority: Option<i64>,
+    ) -> SdkResult<Option<i64>> {
+        let priorities = vec!["None", "1 - Urgent", "2 - High", "3 - Normal", "4 - Low"];
+
+        // Determine default based on template or preferences
+        let mut default_selection = 0;
+        if let Some(priority) = template_priority {
+            default_selection = priority as usize;
+        } else if let Ok(preferences) = self.preferences_manager.load_preferences() {
+            if let Some(priority) = preferences.default_priority {
+                default_selection = priority as usize;
+            }
+        }
+
+        let mut prompt_msg = "Priority".to_string();
+        if default_selection > 0 && default_selection < priorities.len() {
+            prompt_msg = format!("Priority (default: {})", priorities[default_selection]);
+        }
+
+        let selection = Select::new()
+            .with_prompt(&prompt_msg)
+            .items(&priorities)
+            .default(default_selection)
+            .interact()
+            .map_err(|e| LinearError::InvalidInput {
+                message: format!("Failed to select priority: {}", e),
+            })?;
+
+        Ok(match selection {
+            0 => None,
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(3),
+            4 => Some(4),
+            _ => unreachable!(),
         })
     }
 
@@ -474,10 +781,22 @@ mod tests {
             .unwrap()
     }
 
+    fn create_test_prompter(client: &LinearClient) -> InteractivePrompter {
+        let preferences_manager = PreferencesManager::new().unwrap();
+        let template_manager = TemplateManager::new();
+
+        InteractivePrompter {
+            client,
+            is_tty: true,
+            preferences_manager,
+            template_manager,
+        }
+    }
+
     #[test]
     fn test_should_prompt_with_tty() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(true);
+        let prompter = create_test_prompter(&client).with_tty_override(true);
 
         // Should prompt when TTY and not in CI
         assert!(prompter.should_prompt());
@@ -486,7 +805,7 @@ mod tests {
     #[test]
     fn test_should_not_prompt_in_ci() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(true);
+        let prompter = create_test_prompter(&client).with_tty_override(true);
 
         // Set CI environment variable
         unsafe {
@@ -505,7 +824,7 @@ mod tests {
     #[test]
     fn test_should_not_prompt_without_tty() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(false);
+        let prompter = create_test_prompter(&client).with_tty_override(false);
 
         assert!(!prompter.should_prompt());
     }
@@ -513,7 +832,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_team_with_uuid() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client);
+        let prompter = create_test_prompter(&client);
 
         let uuid = "550e8400-e29b-41d4-a716-446655440000";
         let result = prompter.resolve_team(uuid).await.unwrap();
@@ -527,7 +846,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_assignee_unassigned() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client);
+        let prompter = create_test_prompter(&client);
 
         let result = prompter.resolve_assignee("unassigned").await.unwrap();
         assert_eq!(result, None);
@@ -539,7 +858,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_assignee_other() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client);
+        let prompter = create_test_prompter(&client);
 
         let user_id = "user-123";
         let result = prompter.resolve_assignee(user_id).await.unwrap();
@@ -550,7 +869,7 @@ mod tests {
     #[tokio::test]
     async fn test_collect_create_input_non_tty() {
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(false);
+        let prompter = create_test_prompter(&client).with_tty_override(false);
 
         let options = CreateOptions {
             title: Some("Test".to_string()),
@@ -569,7 +888,7 @@ mod tests {
     fn test_enhanced_user_lookup_structure() {
         // Test that the enhanced assignee prompt structure is correct
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client).with_tty_override(true);
+        let prompter = create_test_prompter(&client).with_tty_override(true);
 
         // Test that the prompter structure is correct
         // We need to account for CI environment in testing
@@ -590,7 +909,7 @@ mod tests {
         // Test that we can create the structure for direct user ID input
         // This validates that the method exists and has correct signature
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client);
+        let prompter = create_test_prompter(&client);
 
         // We can't test the actual interactive prompt without mocking dialoguer,
         // but we can ensure the method exists and the structure is correct
@@ -601,7 +920,7 @@ mod tests {
     async fn test_team_context_integration() {
         // Test that team context can be passed correctly
         let client = create_test_client();
-        let prompter = InteractivePrompter::new(&client);
+        let prompter = create_test_prompter(&client);
 
         let _test_team_id = "team-test-123";
 
