@@ -3,7 +3,7 @@
 
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
-use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
+use linear_sdk::{CreateIssueInput, IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
 use secrecy::SecretString;
 use std::env;
@@ -151,6 +151,36 @@ enum Commands {
     /// Logout and clear stored credentials (requires oauth feature)
     #[cfg(feature = "oauth")]
     Logout,
+    /// Create a new issue
+    Create {
+        /// Title of the issue
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Description of the issue
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Team key (e.g., ENG, DESIGN)
+        #[arg(long)]
+        team: Option<String>,
+
+        /// Assignee (use "me" for yourself)
+        #[arg(long)]
+        assignee: Option<String>,
+
+        /// Priority level (1=Urgent, 2=High, 3=Normal, 4=Low)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
+        priority: Option<i64>,
+
+        /// Open the created issue in the browser
+        #[arg(long)]
+        open: bool,
+
+        /// Dry run - validate inputs without creating the issue
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Manage image cache and diagnostics (requires inline-images feature)
     #[cfg(feature = "inline-images")]
     Images {
@@ -580,6 +610,111 @@ async fn handle_images_command(
     Ok(())
 }
 
+struct CreateCommandArgs {
+    title: Option<String>,
+    description: Option<String>,
+    team: Option<String>,
+    assignee: Option<String>,
+    priority: Option<i64>,
+    open: bool,
+    dry_run: bool,
+}
+
+async fn handle_create_command(
+    args: CreateCommandArgs,
+    client: &LinearClient,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    // TODO: Implement interactive prompts and issue creation
+    // For now, just handle basic validation
+
+    let cli = CliOutput::with_color(use_color);
+
+    if args.dry_run {
+        cli.info("Dry run mode - would create issue with:");
+        if let Some(title) = &args.title {
+            println!("  Title: {}", title);
+        }
+        if let Some(description) = &args.description {
+            println!("  Description: {}", description);
+        }
+        if let Some(team) = &args.team {
+            println!("  Team: {}", team);
+        }
+        if let Some(assignee) = &args.assignee {
+            println!("  Assignee: {}", assignee);
+        }
+        if let Some(priority) = args.priority {
+            println!("  Priority: {}", priority);
+        }
+        return Ok(());
+    }
+
+    // For now, require title and team
+    let title = args.title.ok_or_else(|| LinearError::InvalidInput {
+        message: "Title is required".to_string(),
+    })?;
+
+    let team = args.team.ok_or_else(|| LinearError::InvalidInput {
+        message: "Team is required".to_string(),
+    })?;
+
+    // Convert team to team_id (simplified for now - assume team is already team key)
+    let team_id = team.clone();
+
+    // Handle assignee_id conversion if needed
+    let assignee_id = if let Some(assignee) = args.assignee {
+        if assignee == "me" {
+            // Get current user ID
+            let viewer_data = client.execute_viewer_query().await?;
+            Some(viewer_data.viewer.id)
+        } else {
+            // For now, assume it's already a user ID
+            Some(assignee)
+        }
+    } else {
+        None
+    };
+
+    let spinner = create_spinner("Creating issue...", is_interactive);
+
+    let input = CreateIssueInput {
+        title,
+        description: args.description,
+        team_id,
+        assignee_id,
+        priority: args.priority,
+    };
+
+    match client.create_issue(input).await {
+        Ok(issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            cli.success(&format!("Created issue: {}", issue.identifier));
+            println!("Title: {}", issue.title);
+            println!("URL: {}", issue.url);
+
+            if args.open {
+                if let Err(e) = webbrowser::open(&issue.url) {
+                    cli.warning(&format!("Failed to open browser: {}", e));
+                }
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     env_logger::init();
 
@@ -996,6 +1131,31 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                 }
             }
         }
+        Commands::Create {
+            title,
+            description,
+            team,
+            assignee,
+            priority,
+            open,
+            dry_run,
+        } => {
+            handle_create_command(
+                CreateCommandArgs {
+                    title,
+                    description,
+                    team,
+                    assignee,
+                    priority,
+                    open,
+                    dry_run,
+                },
+                &client,
+                use_color,
+                is_interactive,
+            )
+            .await?
+        }
         #[cfg(feature = "oauth")]
         Commands::Login { .. } | Commands::Logout => {
             // These commands are handled earlier, this should never be reached
@@ -1071,6 +1231,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1094,6 +1255,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1117,6 +1279,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1140,6 +1303,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1163,6 +1327,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1186,6 +1351,7 @@ mod tests {
                 assert!(!json);
                 assert!(!raw);
             }
+            Commands::Create { .. } => panic!("Expected Issue command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
@@ -1199,6 +1365,7 @@ mod tests {
                 assert!(json);
                 assert!(!raw);
             }
+            Commands::Create { .. } => panic!("Expected Issue command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
@@ -1212,6 +1379,7 @@ mod tests {
                 assert!(!json);
                 assert!(!raw);
             }
+            Commands::Create { .. } => panic!("Expected Issue command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
@@ -1225,6 +1393,7 @@ mod tests {
                 assert!(!json);
                 assert!(raw);
             }
+            Commands::Create { .. } => panic!("Expected Issue command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
@@ -1238,6 +1407,7 @@ mod tests {
                 assert!(json);
                 assert!(raw);
             }
+            Commands::Create { .. } => panic!("Expected Issue command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
@@ -1267,6 +1437,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1288,6 +1459,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1309,6 +1481,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1340,6 +1513,7 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
+            Commands::Create { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
             #[cfg(feature = "inline-images")]
@@ -1584,5 +1758,146 @@ mod tests {
 
         // Verify it's actually pretty printed (contains newlines)
         assert!(output.contains('\n'));
+    }
+
+    #[test]
+    fn test_parse_create_command() {
+        use clap::Parser;
+
+        // Test basic create command with title and team
+        let cli =
+            Cli::try_parse_from(["linear", "create", "--title", "Test Issue", "--team", "ENG"])
+                .unwrap();
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            } => {
+                assert_eq!(title, Some("Test Issue".to_string()));
+                assert_eq!(description, None);
+                assert_eq!(team, Some("ENG".to_string()));
+                assert_eq!(assignee, None);
+                assert_eq!(priority, None);
+                assert!(!open);
+                assert!(!dry_run);
+            }
+            _ => panic!("Expected Create command"),
+        }
+
+        // Test create command with all options
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "Full Test Issue",
+            "--description",
+            "This is a test description",
+            "--team",
+            "ENG",
+            "--assignee",
+            "me",
+            "--priority",
+            "2",
+            "--open",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            } => {
+                assert_eq!(title, Some("Full Test Issue".to_string()));
+                assert_eq!(description, Some("This is a test description".to_string()));
+                assert_eq!(team, Some("ENG".to_string()));
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(priority, Some(2));
+                assert!(open);
+                assert!(dry_run);
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_create_command_priority_validation() {
+        use clap::Parser;
+
+        // Test valid priority values
+        for priority in 1..=4 {
+            let cli = Cli::try_parse_from([
+                "linear",
+                "create",
+                "--title",
+                "Test",
+                "--team",
+                "ENG",
+                "--priority",
+                &priority.to_string(),
+            ])
+            .unwrap();
+            match cli.command {
+                Commands::Create { priority: p, .. } => {
+                    assert_eq!(p, Some(priority));
+                }
+                _ => panic!("Expected Create command"),
+            }
+        }
+
+        // Test invalid priority values (should fail)
+        let result = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "Test",
+            "--team",
+            "ENG",
+            "--priority",
+            "0",
+        ]);
+        assert!(result.is_err());
+
+        let result = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "Test",
+            "--team",
+            "ENG",
+            "--priority",
+            "5",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_command_help() {
+        use clap::CommandFactory;
+
+        let cmd = Cli::command();
+        let create_cmd = cmd
+            .find_subcommand("create")
+            .expect("create command should exist");
+        assert_eq!(create_cmd.get_name(), "create");
+
+        // Check that all expected arguments are present
+        let args: Vec<_> = create_cmd.get_arguments().map(|arg| arg.get_id()).collect();
+        assert!(args.iter().any(|&id| id == "title"));
+        assert!(args.iter().any(|&id| id == "description"));
+        assert!(args.iter().any(|&id| id == "team"));
+        assert!(args.iter().any(|&id| id == "assignee"));
+        assert!(args.iter().any(|&id| id == "priority"));
+        assert!(args.iter().any(|&id| id == "open"));
+        assert!(args.iter().any(|&id| id == "dry_run"));
     }
 }

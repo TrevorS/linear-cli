@@ -209,3 +209,54 @@ pub fn mock_issue_not_found_response() -> serde_json::Value {
         }
     })
 }
+
+#[cfg(test)]
+pub fn mock_create_issue_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueCreate": {
+                "success": true,
+                "issue": {
+                    "id": "new-issue-id",
+                    "identifier": "ENG-999",
+                    "title": "Test New Issue",
+                    "description": "This is a test issue created via API",
+                    "state": {
+                        "name": "Todo",
+                        "type": "unstarted"
+                    },
+                    "assignee": {
+                        "id": "test-user-id",
+                        "name": "Test User",
+                        "email": "test@example.com"
+                    },
+                    "team": {
+                        "key": "ENG",
+                        "name": "Engineering"
+                    },
+                    "project": null,
+                    "labels": {
+                        "nodes": []
+                    },
+                    "priority": 2.0,
+                    "priorityLabel": "High",
+                    "createdAt": "2024-01-01T00:00:00Z",
+                    "updatedAt": "2024-01-01T00:00:00Z",
+                    "url": "https://linear.app/test/issue/ENG-999"
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_issue_failure_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueCreate": {
+                "success": false,
+                "issue": null
+            }
+        }
+    })
+}
