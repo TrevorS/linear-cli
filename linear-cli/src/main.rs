@@ -11,6 +11,7 @@ use std::io::IsTerminal;
 
 mod cli_output;
 mod constants;
+mod frontmatter;
 mod interactive;
 mod output;
 mod preferences;
@@ -157,6 +158,10 @@ enum Commands {
         #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
         priority: Option<i64>,
 
+        /// Create issue from markdown file with frontmatter
+        #[arg(long, short = 'f', value_name = "FILE")]
+        from_file: Option<String>,
+
         /// Open the created issue in browser
         #[arg(long)]
         open: bool,
@@ -215,6 +220,7 @@ struct CreateCommandArgs {
     team: Option<String>,
     assignee: Option<String>,
     priority: Option<i64>,
+    from_file: Option<String>,
     open: bool,
     dry_run: bool,
 }
@@ -707,6 +713,187 @@ fn main() -> Result<()> {
     }
 }
 
+async fn handle_create_from_file(
+    client: &LinearClient,
+    args: &CreateCommandArgs,
+    file_path: &str,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Parse the markdown file
+    let markdown_file = match crate::frontmatter::parse_markdown_file(file_path) {
+        Ok(file) => file,
+        Err(e) => {
+            cli_output.error(&format!(
+                "Failed to parse markdown file '{}': {}",
+                file_path, e
+            ));
+            std::process::exit(1);
+        }
+    };
+
+    // CLI arguments override frontmatter values
+    let title = args
+        .title
+        .as_ref()
+        .unwrap_or(&markdown_file.frontmatter.title)
+        .clone();
+    let description = args
+        .description
+        .as_ref()
+        .or(if markdown_file.content.trim().is_empty() {
+            None
+        } else {
+            Some(&markdown_file.content)
+        })
+        .map(|s| s.to_string());
+    let team = args
+        .team
+        .as_ref()
+        .or(markdown_file.frontmatter.team.as_ref())
+        .cloned();
+    let assignee = args
+        .assignee
+        .as_ref()
+        .or(markdown_file.frontmatter.assignee.as_ref())
+        .cloned();
+    let priority = args.priority.or(markdown_file.frontmatter.priority);
+
+    // Validate required fields
+    if title.trim().is_empty() {
+        cli_output.error("Title is required (specify in frontmatter or use --title)");
+        std::process::exit(1);
+    }
+
+    let team_id = match team {
+        Some(team) => {
+            // Enhanced team resolution - detect UUID vs team key
+            if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+                // Looks like a UUID
+                team
+            } else {
+                // Assume it's a team key, resolve it
+                match client.resolve_team_key_to_id(&team).await {
+                    Ok(team_id) => team_id,
+                    Err(e) => {
+                        cli_output.error(&format!("Failed to resolve team '{}': {}", team, e));
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+        None => {
+            cli_output.error("Team is required (specify in frontmatter or use --team)");
+            std::process::exit(1);
+        }
+    };
+
+    // Enhanced assignee resolution
+    let assignee_id = if let Some(assignee) = assignee {
+        if assignee.trim().is_empty() || assignee.eq_ignore_ascii_case("unassigned") {
+            None
+        } else if assignee.eq_ignore_ascii_case("me") {
+            let viewer_data = client.execute_viewer_query().await?;
+            Some(viewer_data.viewer.id)
+        } else {
+            // Could be UUID or email/name - pass as-is for now
+            Some(assignee)
+        }
+    } else {
+        None
+    };
+
+    let input = crate::interactive::InteractiveCreateInput {
+        title,
+        description,
+        team_id,
+        assignee_id,
+        priority,
+    };
+
+    // Handle dry-run mode
+    if args.dry_run {
+        cli_output.info("Dry run mode - no issue will be created");
+        println!();
+        println!("Would create issue from file '{}':", file_path);
+        println!("  Title: {}", input.title);
+        if let Some(desc) = &input.description {
+            println!("  Description: {}", desc);
+        }
+        println!("  Team ID: {}", input.team_id);
+        if let Some(assignee_id) = &input.assignee_id {
+            println!("  Assignee ID: {}", assignee_id);
+        }
+        if let Some(priority) = input.priority {
+            println!("  Priority: {}", priority);
+        }
+        if let Some(labels) = &markdown_file.frontmatter.labels {
+            println!("  Labels: {:?} (not yet supported)", labels);
+        }
+        if let Some(project) = &markdown_file.frontmatter.project {
+            println!("  Project: {} (not yet supported)", project);
+        }
+        return Ok(());
+    }
+
+    // Build the SDK create input
+    let sdk_input = linear_sdk::CreateIssueInput {
+        title: input.title,
+        description: input.description,
+        team_id: Some(input.team_id),
+        assignee_id: input.assignee_id,
+        priority: input.priority,
+        label_ids: None, // Future enhancement - need to resolve label names to IDs
+    };
+
+    // Create the issue
+    let spinner = create_spinner("Creating issue from file...", is_interactive);
+    match client.create_issue(sdk_input).await {
+        Ok(created_issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!("Created issue: {}", created_issue.identifier));
+                println!("Title: {}", created_issue.title);
+                if let Some(desc) = &created_issue.description {
+                    println!("Description: {}", desc);
+                }
+                println!("Status: {}", created_issue.state.name);
+                if let Some(assignee) = &created_issue.assignee {
+                    println!("Assignee: {}", assignee.name);
+                }
+                if let Some(team) = &created_issue.team {
+                    println!("Team: {} ({})", team.name, team.key);
+                }
+                println!("URL: {}", created_issue.url);
+
+                // Handle --open flag
+                if args.open {
+                    println!();
+                    cli_output.info(&format!("Issue URL: {}", created_issue.url));
+                    cli_output.info("Please open this URL in your browser");
+                }
+            } else {
+                // Non-interactive: just print the identifier for scripting
+                println!("{}", created_issue.identifier);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_create_command(
     client: &LinearClient,
     args: CreateCommandArgs,
@@ -716,6 +903,11 @@ async fn handle_create_command(
     use crate::interactive::{CreateOptions, InteractivePrompter};
 
     let cli_output = CliOutput::with_color(use_color);
+
+    // Handle file-based input first
+    if let Some(file_path) = &args.from_file {
+        return handle_create_from_file(client, &args, file_path, use_color, is_interactive).await;
+    }
 
     // Check if we need to collect input interactively
     let needs_prompts = args.title.is_none() || args.team.is_none();
@@ -1184,6 +1376,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
             team,
             assignee,
             priority,
+            from_file,
             open,
             dry_run,
         } => {
@@ -1193,6 +1386,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
                 team,
                 assignee,
                 priority,
+                from_file,
                 open,
                 dry_run,
             };
@@ -1864,6 +2058,7 @@ mod tests {
                 priority,
                 open,
                 dry_run,
+                ..
             } => {
                 assert_eq!(title, Some("Test Issue".to_string()));
                 assert_eq!(description, None);
@@ -1909,6 +2104,7 @@ mod tests {
                 priority,
                 open,
                 dry_run,
+                ..
             } => {
                 assert_eq!(title, Some("Complete Test Issue".to_string()));
                 assert_eq!(description, Some("A complete test description".to_string()));
@@ -1948,6 +2144,7 @@ mod tests {
                 priority,
                 open: _,
                 dry_run: _,
+                ..
             } => {
                 assert_eq!(title, Some("Short Flag Test".to_string()));
                 assert_eq!(team, Some("ENG".to_string()));
@@ -1973,6 +2170,7 @@ mod tests {
                 priority,
                 open,
                 dry_run,
+                ..
             } => {
                 assert_eq!(title, None);
                 assert_eq!(description, None);
@@ -2076,6 +2274,7 @@ mod tests {
             team: Some("ENG".to_string()),
             assignee: Some("me".to_string()),
             priority: Some(2),
+            from_file: None,
             open: true,
             dry_run: false,
         };
@@ -2085,6 +2284,7 @@ mod tests {
         assert_eq!(args.team, Some("ENG".to_string()));
         assert_eq!(args.assignee, Some("me".to_string()));
         assert_eq!(args.priority, Some(2));
+        assert_eq!(args.from_file, None);
         assert!(args.open);
         assert!(!args.dry_run);
     }
@@ -2124,6 +2324,71 @@ mod tests {
                 );
                 assert_eq!(team, Some(" ENG ".to_string()));
                 assert_eq!(assignee, Some(" test@example.com ".to_string()));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_from_file() {
+        use clap::Parser;
+
+        // Test create command with --from-file flag
+        let cli = Cli::try_parse_from(["linear", "create", "--from-file", "issue.md"]).unwrap();
+
+        match cli.command {
+            Commands::Create { from_file, .. } => {
+                assert_eq!(from_file, Some("issue.md".to_string()));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_from_file_short() {
+        use clap::Parser;
+
+        // Test create command with -f short flag
+        let cli = Cli::try_parse_from(["linear", "create", "-f", "/path/to/issue.md"]).unwrap();
+
+        match cli.command {
+            Commands::Create { from_file, .. } => {
+                assert_eq!(from_file, Some("/path/to/issue.md".to_string()));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_from_file_with_other_args() {
+        use clap::Parser;
+
+        // Test create command with --from-file and other arguments (CLI args should override)
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--from-file",
+            "issue.md",
+            "--title",
+            "Override Title",
+            "--team",
+            "OVERRIDE",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                from_file,
+                title,
+                team,
+                dry_run,
+                ..
+            } => {
+                assert_eq!(from_file, Some("issue.md".to_string()));
+                assert_eq!(title, Some("Override Title".to_string()));
+                assert_eq!(team, Some("OVERRIDE".to_string()));
+                assert!(dry_run);
             }
             _ => panic!("Expected Create command"),
         }
