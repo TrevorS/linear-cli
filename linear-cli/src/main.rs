@@ -1843,4 +1843,326 @@ mod tests {
         // Verify it's actually pretty printed (contains newlines)
         assert!(output.contains('\n'));
     }
+
+    // CREATE COMMAND TESTS - Testing CLI parsing and validation
+
+    #[test]
+    fn test_parse_create_command_minimal() {
+        use clap::Parser;
+
+        // Test minimal create command with just title and team
+        let cli =
+            Cli::try_parse_from(["linear", "create", "--title", "Test Issue", "--team", "ENG"])
+                .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            } => {
+                assert_eq!(title, Some("Test Issue".to_string()));
+                assert_eq!(description, None);
+                assert_eq!(team, Some("ENG".to_string()));
+                assert_eq!(assignee, None);
+                assert_eq!(priority, None);
+                assert!(!open);
+                assert!(!dry_run);
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_all_fields() {
+        use clap::Parser;
+
+        // Test create command with all possible arguments
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "Complete Test Issue",
+            "--description",
+            "A complete test description",
+            "--team",
+            "DESIGN",
+            "--assignee",
+            "me",
+            "--priority",
+            "2",
+            "--open",
+            "--dry-run",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            } => {
+                assert_eq!(title, Some("Complete Test Issue".to_string()));
+                assert_eq!(description, Some("A complete test description".to_string()));
+                assert_eq!(team, Some("DESIGN".to_string()));
+                assert_eq!(assignee, Some("me".to_string()));
+                assert_eq!(priority, Some(2));
+                assert!(open);
+                assert!(dry_run);
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_short_flags() {
+        use clap::Parser;
+
+        // Test create command with short flag aliases where available
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "Short Flag Test",
+            "--team",
+            "ENG",
+            "--priority",
+            "1",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description: _,
+                team,
+                assignee: _,
+                priority,
+                open: _,
+                dry_run: _,
+            } => {
+                assert_eq!(title, Some("Short Flag Test".to_string()));
+                assert_eq!(team, Some("ENG".to_string()));
+                assert_eq!(priority, Some(1));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_interactive_mode() {
+        use clap::Parser;
+
+        // Test create command without any arguments (should trigger interactive mode)
+        let cli = Cli::try_parse_from(["linear", "create"]).unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                priority,
+                open,
+                dry_run,
+            } => {
+                assert_eq!(title, None);
+                assert_eq!(description, None);
+                assert_eq!(team, None);
+                assert_eq!(assignee, None);
+                assert_eq!(priority, None);
+                assert!(!open);
+                assert!(!dry_run);
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_priority_validation() {
+        use clap::Parser;
+
+        // Test valid priority values
+        for priority in 1..=4 {
+            let cli = Cli::try_parse_from([
+                "linear",
+                "create",
+                "--title",
+                "Priority Test",
+                "--team",
+                "ENG",
+                "--priority",
+                &priority.to_string(),
+            ])
+            .unwrap();
+
+            match cli.command {
+                Commands::Create { priority: p, .. } => {
+                    assert_eq!(p, Some(priority));
+                }
+                _ => panic!("Expected Create command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_invalid_priority() {
+        use clap::Parser;
+
+        // Test invalid priority values (should fail parsing)
+        for invalid_priority in [0, 5, 10] {
+            let result = Cli::try_parse_from([
+                "linear",
+                "create",
+                "--title",
+                "Priority Test",
+                "--team",
+                "ENG",
+                "--priority",
+                &invalid_priority.to_string(),
+            ]);
+
+            assert!(
+                result.is_err(),
+                "Priority {} should be invalid",
+                invalid_priority
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_special_assignees() {
+        use clap::Parser;
+
+        // Test special assignee values
+        let special_assignees = ["me", "unassigned"];
+
+        for assignee in &special_assignees {
+            let cli = Cli::try_parse_from([
+                "linear",
+                "create",
+                "--title",
+                "Assignee Test",
+                "--team",
+                "ENG",
+                "--assignee",
+                assignee,
+            ])
+            .unwrap();
+
+            match cli.command {
+                Commands::Create { assignee: a, .. } => {
+                    assert_eq!(a, Some(assignee.to_string()));
+                }
+                _ => panic!("Expected Create command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_command_args_struct() {
+        // Test the CreateCommandArgs structure used internally
+        let args = CreateCommandArgs {
+            title: Some("Test Title".to_string()),
+            description: Some("Test Description".to_string()),
+            team: Some("ENG".to_string()),
+            assignee: Some("me".to_string()),
+            priority: Some(2),
+            open: true,
+            dry_run: false,
+        };
+
+        assert_eq!(args.title, Some("Test Title".to_string()));
+        assert_eq!(args.description, Some("Test Description".to_string()));
+        assert_eq!(args.team, Some("ENG".to_string()));
+        assert_eq!(args.assignee, Some("me".to_string()));
+        assert_eq!(args.priority, Some(2));
+        assert!(args.open);
+        assert!(!args.dry_run);
+    }
+
+    #[test]
+    fn test_parse_create_command_whitespace_handling() {
+        use clap::Parser;
+
+        // Test that whitespace in arguments is properly handled
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "  Title with spaces  ",
+            "--description",
+            "  Description with\nmultiple lines  ",
+            "--team",
+            " ENG ",
+            "--assignee",
+            " test@example.com ",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                ..
+            } => {
+                // Arguments should preserve whitespace as-is (trimming is handled later)
+                assert_eq!(title, Some("  Title with spaces  ".to_string()));
+                assert_eq!(
+                    description,
+                    Some("  Description with\nmultiple lines  ".to_string())
+                );
+                assert_eq!(team, Some(" ENG ".to_string()));
+                assert_eq!(assignee, Some(" test@example.com ".to_string()));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_command_empty_values() {
+        use clap::Parser;
+
+        // Test parsing with empty string values
+        let cli = Cli::try_parse_from([
+            "linear",
+            "create",
+            "--title",
+            "",
+            "--description",
+            "",
+            "--team",
+            "",
+            "--assignee",
+            "",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Create {
+                title,
+                description,
+                team,
+                assignee,
+                ..
+            } => {
+                // Empty strings should still be parsed as Some("")
+                assert_eq!(title, Some("".to_string()));
+                assert_eq!(description, Some("".to_string()));
+                assert_eq!(team, Some("".to_string()));
+                assert_eq!(assignee, Some("".to_string()));
+            }
+            _ => panic!("Expected Create command"),
+        }
+    }
 }

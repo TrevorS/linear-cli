@@ -80,7 +80,6 @@ impl PerformanceCache {
     }
 }
 
-#[allow(dead_code)] // Phase 3 development - will be integrated in next commit
 #[derive(Debug, Clone)]
 pub struct InteractiveCreateInput {
     pub title: String,
@@ -90,7 +89,6 @@ pub struct InteractiveCreateInput {
     pub priority: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CreateOptions {
     pub title: Option<String>,
@@ -100,7 +98,6 @@ pub struct CreateOptions {
     pub priority: Option<i64>,
 }
 
-#[allow(dead_code)]
 pub struct InteractivePrompter<'a> {
     client: &'a LinearClient,
     is_tty: bool,
@@ -109,7 +106,6 @@ pub struct InteractivePrompter<'a> {
     cache: PerformanceCache,
 }
 
-#[allow(dead_code)]
 impl<'a> InteractivePrompter<'a> {
     pub fn new(client: &'a LinearClient) -> SdkResult<Self> {
         let is_tty = std::io::stdin().is_terminal();
@@ -144,6 +140,7 @@ impl<'a> InteractivePrompter<'a> {
 
     /// Test helper to override TTY detection
     #[cfg(test)]
+    #[allow(dead_code)] // Used in tests to simulate different TTY environments
     pub fn with_tty_override(mut self, is_tty: bool) -> Self {
         self.is_tty = is_tty;
         self
@@ -538,6 +535,7 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Prompt for issue title
+    #[allow(dead_code)] // Individual prompt methods for future modular prompting
     fn prompt_title(&self) -> SdkResult<String> {
         let title: String = Input::new()
             .with_prompt("Title")
@@ -602,6 +600,7 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Prompt for team selection
+    #[allow(dead_code)] // Individual prompt methods for future modular prompting
     async fn prompt_team(&self) -> SdkResult<String> {
         let teams = self.get_teams_cached().await?;
 
@@ -628,6 +627,7 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Enhanced prompt for assignee with user search and team filtering
+    #[allow(dead_code)] // Individual prompt methods for future modular prompting
     async fn prompt_assignee(&self) -> SdkResult<Option<String>> {
         self.prompt_assignee_with_team_context(None).await
     }
@@ -838,6 +838,7 @@ impl<'a> InteractivePrompter<'a> {
     }
 
     /// Prompt for priority
+    #[allow(dead_code)] // Individual prompt methods for future modular prompting
     fn prompt_priority(&self) -> SdkResult<Option<i64>> {
         let priorities = vec!["None", "1 - Urgent", "2 - High", "3 - Normal", "4 - Low"];
 

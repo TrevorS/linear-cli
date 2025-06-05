@@ -134,7 +134,7 @@ pub struct DetailedIssue {
     pub url: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueState {
     pub name: String,
@@ -142,27 +142,27 @@ pub struct IssueState {
     pub type_: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueAssignee {
     pub name: String,
     pub email: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueTeam {
     pub key: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueProject {
     pub name: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueLabel {
     pub name: String,
@@ -1641,5 +1641,208 @@ mod tests {
                 );
             }
         }
+    }
+
+    // CREATE ISSUE TESTS - Testing the core create functionality
+
+    #[tokio::test]
+    async fn test_create_issue_success_with_all_fields() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .match_header("user-agent", "linear-cli/0.1.0")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_success_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Created Issue".to_string(),
+            description: Some("Test description for created issue".to_string()),
+            team_id: Some("team-123".to_string()),
+            assignee_id: Some("user-456".to_string()),
+            priority: Some(2),
+            label_ids: Some(vec!["label-789".to_string()]),
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+        assert_eq!(issue.id, "created-issue-123");
+        assert_eq!(issue.identifier, "ENG-456");
+        assert_eq!(issue.title, "Test Created Issue");
+        assert_eq!(
+            issue.description,
+            Some("Test description for created issue".to_string())
+        );
+        assert_eq!(issue.team.as_ref().unwrap().key, "ENG");
+        assert_eq!(issue.assignee.as_ref().unwrap().name, "Test User");
+        assert_eq!(issue.priority, Some(2));
+        assert_eq!(issue.priority_label, Some("High".to_string()));
+        assert_eq!(issue.labels.len(), 1);
+        assert_eq!(issue.labels[0].name, "bug");
+        assert_eq!(issue.url, "https://linear.app/test/issue/ENG-456");
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_minimal_required_fields() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_minimal_success_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Minimal Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+        assert_eq!(issue.id, "created-issue-minimal-789");
+        assert_eq!(issue.identifier, "ENG-789");
+        assert_eq!(issue.title, "Minimal Issue");
+        assert_eq!(issue.description, None);
+        assert_eq!(issue.team.as_ref().unwrap().key, "ENG");
+        assert_eq!(issue.assignee, None);
+        assert_eq!(issue.priority, Some(0));
+        assert_eq!(issue.labels.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_failure_response() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_failure_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Issue creation failed"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_validation_errors() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_validation_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "".to_string(), // Empty title should trigger validation error
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Title is required"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_graphql_errors() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_graphql_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("GraphQL error"));
     }
 }

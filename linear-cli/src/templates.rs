@@ -176,7 +176,7 @@ Expected duration and key milestones
         Self { templates }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used in tests and for future template listing functionality
     pub fn get_template_names(&self) -> Vec<String> {
         self.templates.keys().cloned().collect()
     }
@@ -220,9 +220,9 @@ pub struct AppliedTemplate {
     pub title: String,
     pub description: String,
     pub suggested_priority: Option<i64>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Future enhancement: auto-suggest team based on template
     pub suggested_team: Option<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Future enhancement: categorize templates with tags
     pub tags: Vec<String>,
 }
 
