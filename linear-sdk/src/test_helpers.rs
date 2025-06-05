@@ -209,3 +209,115 @@ pub fn mock_issue_not_found_response() -> serde_json::Value {
         }
     })
 }
+
+#[cfg(test)]
+pub fn mock_create_issue_success_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueCreate": {
+                "success": true,
+                "issue": {
+                    "id": "created-issue-123",
+                    "identifier": "ENG-456",
+                    "title": "Test Created Issue",
+                    "description": "Test description for created issue",
+                    "state": {
+                        "id": "state-123",
+                        "name": "Todo",
+                        "type": "unstarted"
+                    },
+                    "assignee": {
+                        "id": "user-456",
+                        "name": "Test User",
+                        "email": "test@example.com"
+                    },
+                    "team": {
+                        "id": "team-123",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    },
+                    "labels": {
+                        "nodes": [
+                            {
+                                "id": "label-789",
+                                "name": "bug",
+                                "color": "#ff0000"
+                            }
+                        ]
+                    },
+                    "priority": 2.0,
+                    "priorityLabel": "High",
+                    "createdAt": "2024-01-15T10:30:00Z",
+                    "updatedAt": "2024-01-15T10:30:00Z",
+                    "url": "https://linear.app/test/issue/ENG-456"
+                },
+                "lastSyncId": 123456
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_issue_minimal_success_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueCreate": {
+                "success": true,
+                "issue": {
+                    "id": "created-issue-minimal-789",
+                    "identifier": "ENG-789",
+                    "title": "Minimal Issue",
+                    "description": null,
+                    "state": {
+                        "id": "state-123",
+                        "name": "Todo",
+                        "type": "unstarted"
+                    },
+                    "assignee": null,
+                    "team": {
+                        "id": "team-123",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    },
+                    "labels": {
+                        "nodes": []
+                    },
+                    "priority": 0.0,
+                    "priorityLabel": "None",
+                    "createdAt": "2024-01-15T10:30:00Z",
+                    "updatedAt": "2024-01-15T10:30:00Z",
+                    "url": "https://linear.app/test/issue/ENG-789"
+                },
+                "lastSyncId": 123456
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_issue_failure_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueCreate": {
+                "success": false,
+                "issue": null,
+                "lastSyncId": 123456
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_issue_validation_error_response() -> serde_json::Value {
+    json!({
+        "errors": [
+            {
+                "message": "Title is required",
+                "extensions": {
+                    "code": "VALIDATION_ERROR",
+                    "field": "title"
+                }
+            }
+        ]
+    })
+}

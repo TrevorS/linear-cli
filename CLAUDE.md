@@ -63,6 +63,7 @@ cargo run -p xtask -- schema --api-key YOUR_API_KEY  # Update GraphQL schema
 - **For development**: Use API key (LINEAR_API_KEY in .env) to avoid macOS keychain dialogs
 - **For users**: OAuth flow with keychain storage for secure token management
 - API key takes precedence over OAuth if both are available
+- **Tip**: Use the API key in .env to avoid CLI auth pop ups
 
 ### Logging
 The CLI uses structured logging via the `log` crate and `env_logger`:

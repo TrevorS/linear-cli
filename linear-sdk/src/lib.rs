@@ -32,8 +32,11 @@ pub type Result<T> = std::result::Result<T, LinearError>;
 // Custom scalar types used by Linear's GraphQL schema
 type DateTimeOrDuration = String;
 type TimelessDateOrDuration = String;
+type TimelessDate = String;
 type Duration = String;
 type DateTime = String;
+#[allow(clippy::upper_case_acronyms)]
+type JSON = serde_json::Value;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -68,6 +71,36 @@ pub struct ListIssues;
 )]
 pub struct GetIssue;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/mutations/create_issue.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct CreateIssue;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/users.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListUsers;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/teams.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeams;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -101,7 +134,7 @@ pub struct DetailedIssue {
     pub url: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueState {
     pub name: String,
@@ -109,31 +142,80 @@ pub struct IssueState {
     pub type_: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueAssignee {
     pub name: String,
     pub email: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueTeam {
     pub key: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueProject {
     pub name: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueLabel {
     pub name: String,
     pub color: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedIssue {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub state: IssueState,
+    pub assignee: Option<IssueAssignee>,
+    pub team: Option<IssueTeam>,
+    pub labels: Vec<IssueLabel>,
+    pub priority: Option<i64>,
+    pub priority_label: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateIssueInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub team_id: Option<String>,
+    pub assignee_id: Option<String>,
+    pub priority: Option<i64>,
+    pub label_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+    pub id: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub active: bool,
+    pub guest: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Team {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub members: Vec<User>,
 }
 
 pub struct LinearClient {
@@ -630,6 +712,281 @@ impl LinearClient {
             updated_at: issue.updated_at,
             url: issue.url,
         })
+    }
+
+    pub async fn create_issue(&self, input: CreateIssueInput) -> Result<CreatedIssue> {
+        // For now, let's create a simpler implementation that we'll enhance in later phases
+        // This builds the actual GraphQL variables properly
+
+        let variables = create_issue::Variables {
+            input: create_issue::IssueCreateInput {
+                title: Some(input.title),
+                description: input.description,
+                team_id: input.team_id.unwrap_or_default(),
+                assignee_id: input.assignee_id,
+                priority: input.priority,
+                label_ids: input.label_ids,
+
+                // Initialize other available fields to sensible defaults
+                state_id: None,
+                project_id: None,
+                project_milestone_id: None,
+                parent_id: None,
+                due_date: None,
+                estimate: None,
+                sort_order: None,
+                create_as_user: None,
+                display_icon_url: None,
+                subscriber_ids: None,
+                template_id: None,
+                completed_at: None,
+                created_at: None,
+                cycle_id: None,
+                sla_breaches_at: None,
+                sla_started_at: None,
+                id: None,
+                description_data: None,
+                last_applied_template_id: None,
+                reference_comment_id: None,
+                source_comment_id: None,
+                preserve_sort_order_on_create: None,
+                priority_sort_order: None,
+                sla_type: None,
+                source_pull_request_comment_id: None,
+                sub_issue_sort_order: None,
+            },
+        };
+
+        let data = self.execute_graphql::<CreateIssue, _>(variables).await?;
+
+        if !data.issue_create.success {
+            return Err(LinearError::GraphQL {
+                message: "Issue creation failed".to_string(),
+                errors: vec![],
+            });
+        }
+
+        let issue = data
+            .issue_create
+            .issue
+            .ok_or_else(|| LinearError::GraphQL {
+                message: "Issue creation succeeded but no issue data returned".to_string(),
+                errors: vec![],
+            })?;
+
+        Ok(CreatedIssue {
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            description: issue.description,
+            state: IssueState {
+                name: issue.state.name,
+                type_: issue.state.type_,
+            },
+            assignee: issue.assignee.map(|a| IssueAssignee {
+                name: a.name,
+                email: a.email,
+            }),
+            team: Some(IssueTeam {
+                key: issue.team.key,
+                name: issue.team.name,
+            }),
+            labels: issue
+                .labels
+                .nodes
+                .into_iter()
+                .map(|l| IssueLabel {
+                    name: l.name,
+                    color: l.color,
+                })
+                .collect(),
+            priority: Some(issue.priority as i64),
+            priority_label: Some(issue.priority_label),
+            created_at: issue.created_at,
+            updated_at: issue.updated_at,
+            url: issue.url,
+        })
+    }
+
+    pub async fn list_users(&self, limit: i32) -> Result<Vec<User>> {
+        self.list_users_filtered(limit, None).await
+    }
+
+    pub async fn list_users_filtered(
+        &self,
+        limit: i32,
+        filter: Option<list_users::UserFilter>,
+    ) -> Result<Vec<User>> {
+        let variables = list_users::Variables {
+            first: limit as i64,
+            filter,
+        };
+
+        let data = self.execute_graphql::<ListUsers, _>(variables).await?;
+        let users = data
+            .users
+            .nodes
+            .into_iter()
+            .map(|user| User {
+                id: user.id,
+                name: user.name,
+                display_name: Some(user.display_name),
+                email: user.email,
+                active: user.active,
+                guest: user.guest,
+            })
+            .collect();
+        Ok(users)
+    }
+
+    pub async fn list_teams(&self) -> Result<Vec<Team>> {
+        let variables = list_teams::Variables {
+            first: 50, // Reasonable default for teams
+        };
+
+        let data = self.execute_graphql::<ListTeams, _>(variables).await?;
+        let teams = data
+            .teams
+            .nodes
+            .into_iter()
+            .map(|team| Team {
+                id: team.id,
+                key: team.key,
+                name: team.name,
+                description: team.description,
+                members: team
+                    .members
+                    .nodes
+                    .into_iter()
+                    .map(|member| User {
+                        id: member.id,
+                        name: member.name,
+                        display_name: Some(member.display_name),
+                        email: member.email,
+                        active: member.active,
+                        guest: false, // Team members are not guests by default
+                    })
+                    .collect(),
+            })
+            .collect();
+        Ok(teams)
+    }
+
+    pub async fn search_users(&self, query: &str, limit: i32) -> Result<Vec<User>> {
+        use list_users::*;
+
+        // Create a user filter for searching by name or email
+        let user_filter = UserFilter {
+            and: Box::new(None),
+            or: Box::new(Some(vec![
+                UserFilter {
+                    name: Some(StringComparator {
+                        contains_ignore_case: Some(query.to_string()),
+                        eq: None,
+                        neq: None,
+                        in_: None,
+                        nin: None,
+                        eq_ignore_case: None,
+                        neq_ignore_case: None,
+                        starts_with: None,
+                        starts_with_ignore_case: None,
+                        not_starts_with: None,
+                        ends_with: None,
+                        not_ends_with: None,
+                        contains: None,
+                        not_contains: None,
+                        not_contains_ignore_case: None,
+                        contains_ignore_case_and_accent: None,
+                    }),
+                    and: Box::new(None),
+                    or: Box::new(None),
+                    id: None,
+                    created_at: None,
+                    updated_at: None,
+                    display_name: None,
+                    email: None,
+                    active: None,
+                    admin: None,
+                    invited: None,
+                    assigned_issues: Box::new(None),
+                    app: None,
+                    is_me: None,
+                },
+                UserFilter {
+                    email: Some(StringComparator {
+                        contains_ignore_case: Some(query.to_string()),
+                        eq: None,
+                        neq: None,
+                        in_: None,
+                        nin: None,
+                        eq_ignore_case: None,
+                        neq_ignore_case: None,
+                        starts_with: None,
+                        starts_with_ignore_case: None,
+                        not_starts_with: None,
+                        ends_with: None,
+                        not_ends_with: None,
+                        contains: None,
+                        not_contains: None,
+                        not_contains_ignore_case: None,
+                        contains_ignore_case_and_accent: None,
+                    }),
+                    and: Box::new(None),
+                    or: Box::new(None),
+                    id: None,
+                    created_at: None,
+                    updated_at: None,
+                    name: None,
+                    display_name: None,
+                    active: None,
+                    admin: None,
+                    invited: None,
+                    assigned_issues: Box::new(None),
+                    app: None,
+                    is_me: None,
+                },
+            ])),
+            id: None,
+            created_at: None,
+            updated_at: None,
+            name: None,
+            display_name: None,
+            email: None,
+            active: None,
+            admin: None,
+            invited: None,
+            assigned_issues: Box::new(None),
+            app: None,
+            is_me: None,
+        };
+
+        self.list_users_filtered(limit, Some(user_filter)).await
+    }
+
+    pub async fn resolve_team_key_to_id(&self, team_key: &str) -> Result<String> {
+        let teams = self.list_teams().await?;
+
+        for team in teams {
+            if team.key.eq_ignore_ascii_case(team_key) {
+                return Ok(team.id);
+            }
+        }
+
+        Err(LinearError::InvalidInput {
+            message: format!("Team with key '{}' not found", team_key),
+        })
+    }
+
+    pub async fn resolve_user_id(&self, assignee: &str) -> Result<Option<String>> {
+        if assignee == "me" {
+            // Get current user from viewer query
+            let viewer_data = self.execute_viewer_query().await?;
+            Ok(Some(viewer_data.viewer.id))
+        } else {
+            // For now, return as-is (could be a UUID or email)
+            // In later phases we'll add user search functionality
+            Ok(Some(assignee.to_string()))
+        }
     }
 }
 
@@ -1284,5 +1641,208 @@ mod tests {
                 );
             }
         }
+    }
+
+    // CREATE ISSUE TESTS - Testing the core create functionality
+
+    #[tokio::test]
+    async fn test_create_issue_success_with_all_fields() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .match_header("user-agent", "linear-cli/0.1.0")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_success_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Created Issue".to_string(),
+            description: Some("Test description for created issue".to_string()),
+            team_id: Some("team-123".to_string()),
+            assignee_id: Some("user-456".to_string()),
+            priority: Some(2),
+            label_ids: Some(vec!["label-789".to_string()]),
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+        assert_eq!(issue.id, "created-issue-123");
+        assert_eq!(issue.identifier, "ENG-456");
+        assert_eq!(issue.title, "Test Created Issue");
+        assert_eq!(
+            issue.description,
+            Some("Test description for created issue".to_string())
+        );
+        assert_eq!(issue.team.as_ref().unwrap().key, "ENG");
+        assert_eq!(issue.assignee.as_ref().unwrap().name, "Test User");
+        assert_eq!(issue.priority, Some(2));
+        assert_eq!(issue.priority_label, Some("High".to_string()));
+        assert_eq!(issue.labels.len(), 1);
+        assert_eq!(issue.labels[0].name, "bug");
+        assert_eq!(issue.url, "https://linear.app/test/issue/ENG-456");
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_minimal_required_fields() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_minimal_success_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Minimal Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let issue = result.unwrap();
+        assert_eq!(issue.id, "created-issue-minimal-789");
+        assert_eq!(issue.identifier, "ENG-789");
+        assert_eq!(issue.title, "Minimal Issue");
+        assert_eq!(issue.description, None);
+        assert_eq!(issue.team.as_ref().unwrap().key, "ENG");
+        assert_eq!(issue.assignee, None);
+        assert_eq!(issue.priority, Some(0));
+        assert_eq!(issue.labels.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_failure_response() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_failure_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Issue creation failed"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_validation_errors() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_create_issue_validation_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "".to_string(), // Empty title should trigger validation error
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Title is required"));
+    }
+
+    #[tokio::test]
+    async fn test_create_issue_graphql_errors() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_graphql_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let input = CreateIssueInput {
+            title: "Test Issue".to_string(),
+            description: None,
+            team_id: Some("team-123".to_string()),
+            assignee_id: None,
+            priority: None,
+            label_ids: None,
+        };
+
+        let result = client.create_issue(input).await;
+
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("GraphQL error"));
     }
 }
