@@ -1179,8 +1179,21 @@ async fn handle_update_command(
         None
     };
 
-    // TODO: Resolve status to state_id if provided
-    let state_id = args.status; // For now, pass as-is
+    // Resolve status to state_id if provided
+    let state_id = if let Some(ref status_name) = args.status {
+        // Get the issue first to determine its team
+        let issue = client.get_issue(args.id.clone()).await?;
+        let team_id = issue.team.as_ref().unwrap().id.clone();
+
+        // Resolve status name to actual state ID for this team
+        Some(
+            client
+                .resolve_status_to_state_id(&team_id, status_name)
+                .await?,
+        )
+    } else {
+        None
+    };
 
     let input = linear_sdk::UpdateIssueInput {
         title: args.title,
@@ -1207,8 +1220,10 @@ async fn handle_update_command(
                 println!("  Assignee: {}", assignee_id);
             }
         }
-        if let Some(ref state_id) = input.state_id {
-            println!("  Status: {}", state_id);
+        if let Some(ref _state_id) = input.state_id {
+            if let Some(ref status_name) = args.status {
+                println!("  Status: {}", status_name);
+            }
         }
         if let Some(priority) = input.priority {
             println!("  Priority: {}", priority);
@@ -1293,13 +1308,18 @@ async fn handle_close_command(
         }
     }
 
-    // TODO: Get the actual "Done" state ID from the team's workflow
-    // For now, use a common status name
+    // Get the issue first to determine its team, then resolve the "Done" state ID
+    let issue = client.get_issue(id.clone()).await?;
+    let team_id = issue.team.as_ref().unwrap().id.clone();
+
+    // Resolve "Done" status to the actual state ID for this team
+    let done_state_id = client.resolve_status_to_state_id(&team_id, "Done").await?;
+
     let input = linear_sdk::UpdateIssueInput {
         title: None,
         description: None,
         assignee_id: None,
-        state_id: Some("Done".to_string()), // This will need to be resolved to actual state ID
+        state_id: Some(done_state_id),
         priority: None,
         label_ids: None,
     };
@@ -1358,13 +1378,18 @@ async fn handle_reopen_command(
         }
     }
 
-    // TODO: Get the actual "Todo" or "In Progress" state ID from the team's workflow
-    // For now, use a common status name
+    // Get the issue first to determine its team, then resolve the "Todo" state ID
+    let issue = client.get_issue(id.clone()).await?;
+    let team_id = issue.team.as_ref().unwrap().id.clone();
+
+    // Resolve "Todo" status to the actual state ID for this team (uses default issue state)
+    let todo_state_id = client.resolve_status_to_state_id(&team_id, "Todo").await?;
+
     let input = linear_sdk::UpdateIssueInput {
         title: None,
         description: None,
         assignee_id: None,
-        state_id: Some("Todo".to_string()), // This will need to be resolved to actual state ID
+        state_id: Some(todo_state_id),
         priority: None,
         label_ids: None,
     };
@@ -2455,18 +2480,22 @@ mod tests {
                 identifier: "ENG-123".to_string(),
                 title: "Test issue".to_string(),
                 status: "Todo".to_string(),
+                state_id: "state-todo-123".to_string(),
                 assignee: Some("Alice".to_string()),
                 assignee_id: Some("user-1".to_string()),
                 team: Some("ENG".to_string()),
+                team_id: "team-eng-123".to_string(),
             },
             Issue {
                 id: "2".to_string(),
                 identifier: "ENG-124".to_string(),
                 title: "Another issue".to_string(),
                 status: "Done".to_string(),
+                state_id: "state-done-124".to_string(),
                 assignee: None,
                 assignee_id: None,
                 team: Some("ENG".to_string()),
+                team_id: "team-eng-124".to_string(),
             },
         ];
 

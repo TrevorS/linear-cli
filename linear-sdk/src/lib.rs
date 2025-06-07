@@ -121,6 +121,16 @@ pub struct UpdateIssue;
 )]
 pub struct CreateComment;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/team_states.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeamStates;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -130,9 +140,11 @@ pub struct Issue {
     pub identifier: String,
     pub title: String,
     pub status: String,
+    pub state_id: String,
     pub assignee: Option<String>,
     pub assignee_id: Option<String>,
     pub team: Option<String>,
+    pub team_id: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -157,6 +169,7 @@ pub struct DetailedIssue {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueState {
+    pub id: String,
     pub name: String,
     #[serde(rename = "type")]
     pub type_: String,
@@ -172,6 +185,7 @@ pub struct IssueAssignee {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IssueTeam {
+    pub id: String,
     pub key: String,
     pub name: String,
 }
@@ -276,6 +290,28 @@ pub struct CommentIssue {
     pub id: String,
     pub identifier: String,
     pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowState {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub description: Option<String>,
+    pub position: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamWithStates {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub states: Vec<WorkflowState>,
+    pub default_issue_state: Option<WorkflowState>,
+    pub marked_as_duplicate_workflow_state: Option<WorkflowState>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -728,10 +764,12 @@ impl LinearClient {
                 id: issue.id,
                 identifier: issue.identifier,
                 title: issue.title,
-                status: issue.state.name,
+                status: issue.state.name.clone(),
+                state_id: issue.state.id,
                 assignee: issue.assignee.as_ref().map(|a| a.name.clone()),
                 assignee_id: issue.assignee.map(|a| a.id),
-                team: Some(issue.team.key),
+                team: Some(issue.team.key.clone()),
+                team_id: issue.team.id,
             })
             .collect();
         Ok(issues)
@@ -766,6 +804,7 @@ impl LinearClient {
             title: issue.title,
             description: issue.description,
             state: IssueState {
+                id: issue.state.id,
                 name: issue.state.name,
                 type_: issue.state.type_,
             },
@@ -774,6 +813,7 @@ impl LinearClient {
                 email: a.email,
             }),
             team: Some(IssueTeam {
+                id: issue.team.id,
                 key: issue.team.key,
                 name: issue.team.name,
             }),
@@ -861,6 +901,7 @@ impl LinearClient {
             title: issue.title,
             description: issue.description,
             state: IssueState {
+                id: issue.state.id,
                 name: issue.state.name,
                 type_: issue.state.type_,
             },
@@ -869,6 +910,7 @@ impl LinearClient {
                 email: a.email,
             }),
             team: Some(IssueTeam {
+                id: issue.team.id,
                 key: issue.team.key,
                 name: issue.team.name,
             }),
@@ -1146,6 +1188,7 @@ impl LinearClient {
             title: issue.title,
             description: issue.description,
             state: IssueState {
+                id: issue.state.id,
                 name: issue.state.name,
                 type_: issue.state.type_,
             },
@@ -1154,6 +1197,7 @@ impl LinearClient {
                 email: a.email,
             }),
             team: Some(IssueTeam {
+                id: issue.team.id,
                 key: issue.team.key,
                 name: issue.team.name,
             }),
@@ -1232,6 +1276,119 @@ impl LinearClient {
             },
             created_at: comment.created_at.clone(),
             updated_at: comment.updated_at.clone(),
+        })
+    }
+
+    pub async fn get_team_states(&self, team_id: String) -> Result<TeamWithStates> {
+        let variables = list_team_states::Variables { team_id };
+
+        let data = self.execute_graphql::<ListTeamStates, _>(variables).await?;
+
+        let team = data.team;
+        let states = team
+            .states
+            .nodes
+            .into_iter()
+            .map(|state| WorkflowState {
+                id: state.id,
+                name: state.name,
+                type_: state.type_,
+                description: state.description,
+                position: Some(state.position),
+            })
+            .collect();
+
+        let default_issue_state = team.default_issue_state.map(|state| WorkflowState {
+            id: state.id,
+            name: state.name,
+            type_: state.type_,
+            description: None,
+            position: None,
+        });
+
+        let marked_as_duplicate_workflow_state =
+            team.marked_as_duplicate_workflow_state
+                .map(|state| WorkflowState {
+                    id: state.id,
+                    name: state.name,
+                    type_: state.type_,
+                    description: None,
+                    position: None,
+                });
+
+        Ok(TeamWithStates {
+            id: team.id,
+            key: team.key,
+            name: team.name,
+            states,
+            default_issue_state,
+            marked_as_duplicate_workflow_state,
+        })
+    }
+
+    pub async fn resolve_status_to_state_id(
+        &self,
+        team_id: &str,
+        status_name: &str,
+    ) -> Result<String> {
+        let team_states = self.get_team_states(team_id.to_string()).await?;
+
+        // Handle special status names
+        match status_name.to_lowercase().as_str() {
+            "done" | "completed" => {
+                // Look for a completed state (type "completed")
+                if let Some(state) = team_states.states.iter().find(|s| s.type_ == "completed") {
+                    return Ok(state.id.clone());
+                }
+                // Fallback: look for a state named "Done"
+                if let Some(state) = team_states
+                    .states
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case("done"))
+                {
+                    return Ok(state.id.clone());
+                }
+            }
+            "todo" | "backlog" | "open" => {
+                // Use the team's default issue state if available
+                if let Some(default_state) = &team_states.default_issue_state {
+                    return Ok(default_state.id.clone());
+                }
+                // Fallback: look for states with type "unstarted"
+                if let Some(state) = team_states.states.iter().find(|s| s.type_ == "unstarted") {
+                    return Ok(state.id.clone());
+                }
+                // Last fallback: look for a state named "Todo" or "Backlog"
+                if let Some(state) = team_states.states.iter().find(|s| {
+                    s.name.eq_ignore_ascii_case("todo") || s.name.eq_ignore_ascii_case("backlog")
+                }) {
+                    return Ok(state.id.clone());
+                }
+            }
+            _ => {
+                // For other status names, try exact match first
+                if let Some(state) = team_states
+                    .states
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(status_name))
+                {
+                    return Ok(state.id.clone());
+                }
+            }
+        }
+
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Status '{}' not found in team '{}'. Available states: {}",
+                status_name,
+                team_states.name,
+                team_states
+                    .states
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         })
     }
 }
@@ -2349,6 +2506,386 @@ mod tests {
 
         let result = client.create_comment(input).await;
 
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("GraphQL error"));
+    }
+
+    // TEAM STATES TESTS - Following TDD approach for state resolution
+
+    #[tokio::test]
+    async fn test_get_team_states_success() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        let result = client.get_team_states("team-123".to_string()).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let team_states = result.unwrap();
+        assert_eq!(team_states.id, "team-123");
+        assert_eq!(team_states.key, "ENG");
+        assert_eq!(team_states.name, "Engineering");
+        assert_eq!(team_states.states.len(), 4);
+
+        // Check specific states
+        let todo_state = team_states
+            .states
+            .iter()
+            .find(|s| s.name == "Todo")
+            .unwrap();
+        assert_eq!(todo_state.id, "state-todo-123");
+        assert_eq!(todo_state.type_, "unstarted");
+
+        let done_state = team_states
+            .states
+            .iter()
+            .find(|s| s.name == "Done")
+            .unwrap();
+        assert_eq!(done_state.id, "state-done-999");
+        assert_eq!(done_state.type_, "completed");
+
+        // Check default state
+        assert!(team_states.default_issue_state.is_some());
+        let default_state = team_states.default_issue_state.unwrap();
+        assert_eq!(default_state.id, "state-todo-123");
+        assert_eq!(default_state.name, "Todo");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_done() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test "Done" resolution
+        let result = client.resolve_status_to_state_id("team-123", "Done").await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-done-999");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_todo() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test "Todo" resolution uses default state
+        let result = client.resolve_status_to_state_id("team-123", "Todo").await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-todo-123");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_exact_match() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test exact match for "In Progress"
+        let result = client
+            .resolve_status_to_state_id("team-123", "In Progress")
+            .await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-progress-456");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_case_insensitive() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test case insensitive matching
+        let result = client.resolve_status_to_state_id("team-123", "done").await;
+        mock.assert();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-done-999");
+
+        // Test with different case
+        let result = client
+            .resolve_status_to_state_id("team-123", "IN PROGRESS")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-progress-456");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_aliases() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .expect(3) // Multiple calls
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test "completed" alias for "done"
+        let result = client
+            .resolve_status_to_state_id("team-123", "completed")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-done-999");
+
+        // Test "backlog" alias for "todo"
+        let result = client
+            .resolve_status_to_state_id("team-123", "backlog")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-todo-123");
+
+        // Test "open" alias for "todo"
+        let result = client.resolve_status_to_state_id("team-123", "open").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-todo-123");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_to_state_id_not_found() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test non-existent status
+        let result = client
+            .resolve_status_to_state_id("team-123", "Unknown Status")
+            .await;
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Status 'Unknown Status' not found")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Available states: Todo, In Progress, In Review, Done")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_minimal_team() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_minimal_response().to_string())
+            .expect(3)
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test with minimal team setup (only Backlog and Complete)
+        let result = client
+            .resolve_status_to_state_id("team-456", "completed")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-complete-333");
+
+        // Test default state (Backlog)
+        let result = client.resolve_status_to_state_id("team-456", "todo").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-backlog-222");
+
+        // Test exact match for "Backlog"
+        let result = client
+            .resolve_status_to_state_id("team-456", "Backlog")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "state-backlog-222");
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_edge_cases() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_no_default_response().to_string())
+            .expect(2)
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test when there's no default state and asking for "todo"
+        let result = client.resolve_status_to_state_id("team-789", "todo").await;
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Status 'todo' not found"));
+        assert!(error.to_string().contains("Available states: Custom State"));
+
+        // Test when asking for "done" but no completed state exists
+        let result = client.resolve_status_to_state_id("team-789", "done").await;
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Status 'done' not found"));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_status_empty_status_name() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_team_states_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test empty status name
+        let result = client.resolve_status_to_state_id("team-123", "").await;
+        mock.assert();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("Status '' not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_team_states_graphql_error() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_header("authorization", "test_api_key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_graphql_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new(
+                "test_api_key".to_string().into_boxed_str(),
+            ))
+            .base_url(Some(server.url()))
+            .build()
+            .unwrap();
+
+        // Test GraphQL error for team states
+        let result = client.get_team_states("team-123".to_string()).await;
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();

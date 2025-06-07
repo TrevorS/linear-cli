@@ -35,6 +35,7 @@ pub fn mock_issues_response() -> serde_json::Value {
                         "title": "Test Issue 1",
                         "identifier": "TEST-1",
                         "state": {
+                            "id": "state-todo-123",
                             "name": "Todo"
                         },
                         "assignee": {
@@ -42,6 +43,7 @@ pub fn mock_issues_response() -> serde_json::Value {
                             "name": "Alice"
                         },
                         "team": {
+                            "id": "team-123",
                             "key": "ENG"
                         }
                     },
@@ -50,6 +52,7 @@ pub fn mock_issues_response() -> serde_json::Value {
                         "title": "Test Issue 2",
                         "identifier": "TEST-2",
                         "state": {
+                            "id": "state-progress-456",
                             "name": "In Progress"
                         },
                         "assignee": {
@@ -57,6 +60,7 @@ pub fn mock_issues_response() -> serde_json::Value {
                             "name": "Bob"
                         },
                         "team": {
+                            "id": "team-456",
                             "key": "DESIGN"
                         }
                     },
@@ -65,10 +69,12 @@ pub fn mock_issues_response() -> serde_json::Value {
                         "title": "Test Issue 3",
                         "identifier": "TEST-3",
                         "state": {
+                            "id": "state-done-999",
                             "name": "Done"
                         },
                         "assignee": null,
                         "team": {
+                            "id": "team-789",
                             "key": "QA"
                         }
                     }
@@ -133,6 +139,7 @@ pub fn mock_detailed_issue_response() -> serde_json::Value {
                 "title": "Fix login race condition",
                 "description": "Users are experiencing race conditions when logging in simultaneously from multiple devices.",
                 "state": {
+                    "id": "state-progress-456",
                     "name": "In Progress",
                     "type": "started"
                 },
@@ -141,6 +148,7 @@ pub fn mock_detailed_issue_response() -> serde_json::Value {
                     "email": "john@example.com"
                 },
                 "team": {
+                    "id": "team-123",
                     "key": "ENG",
                     "name": "Engineering"
                 },
@@ -179,11 +187,13 @@ pub fn mock_minimal_issue_response() -> serde_json::Value {
                 "title": "Simple issue",
                 "description": null,
                 "state": {
+                    "id": "state-todo-456",
                     "name": "Todo",
                     "type": "unstarted"
                 },
                 "assignee": null,
                 "team": {
+                    "id": "team-123",
                     "key": "ENG",
                     "name": "Engineering"
                 },
@@ -433,6 +443,124 @@ pub fn mock_create_comment_failure_response() -> serde_json::Value {
                 "success": false,
                 "comment": null,
                 "lastSyncId": 789456
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_team_states_response() -> serde_json::Value {
+    serde_json::json!({
+        "data": {
+            "team": {
+                "id": "team-123",
+                "key": "ENG",
+                "name": "Engineering",
+                "states": {
+                    "nodes": [
+                        {
+                            "id": "state-todo-123",
+                            "name": "Todo",
+                            "type": "unstarted",
+                            "description": "Work that has been triaged and is ready to be worked on",
+                            "position": 0.0
+                        },
+                        {
+                            "id": "state-progress-456",
+                            "name": "In Progress",
+                            "type": "started",
+                            "description": "Work that is being actively worked on",
+                            "position": 1.0
+                        },
+                        {
+                            "id": "state-review-789",
+                            "name": "In Review",
+                            "type": "started",
+                            "description": "Work that is being reviewed",
+                            "position": 2.0
+                        },
+                        {
+                            "id": "state-done-999",
+                            "name": "Done",
+                            "type": "completed",
+                            "description": "Work that has been completed",
+                            "position": 3.0
+                        }
+                    ]
+                },
+                "defaultIssueState": {
+                    "id": "state-todo-123",
+                    "name": "Todo",
+                    "type": "unstarted"
+                },
+                "markedAsDuplicateWorkflowState": {
+                    "id": "state-duplicate-111",
+                    "name": "Duplicate",
+                    "type": "canceled"
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_team_states_minimal_response() -> serde_json::Value {
+    serde_json::json!({
+        "data": {
+            "team": {
+                "id": "team-456",
+                "key": "DESIGN",
+                "name": "Design",
+                "states": {
+                    "nodes": [
+                        {
+                            "id": "state-backlog-222",
+                            "name": "Backlog",
+                            "type": "unstarted",
+                            "description": null,
+                            "position": 0.0
+                        },
+                        {
+                            "id": "state-complete-333",
+                            "name": "Complete",
+                            "type": "completed",
+                            "description": null,
+                            "position": 1.0
+                        }
+                    ]
+                },
+                "defaultIssueState": {
+                    "id": "state-backlog-222",
+                    "name": "Backlog",
+                    "type": "unstarted"
+                },
+                "markedAsDuplicateWorkflowState": null
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_team_states_no_default_response() -> serde_json::Value {
+    serde_json::json!({
+        "data": {
+            "team": {
+                "id": "team-789",
+                "key": "WEIRD",
+                "name": "Weird Team",
+                "states": {
+                    "nodes": [
+                        {
+                            "id": "state-custom-111",
+                            "name": "Custom State",
+                            "type": "started",
+                            "description": null,
+                            "position": 0.0
+                        }
+                    ]
+                },
+                "defaultIssueState": null,
+                "markedAsDuplicateWorkflowState": null
             }
         }
     })

@@ -884,9 +884,11 @@ mod tests {
             identifier: identifier.to_string(),
             title: title.to_string(),
             status: status.to_string(),
+            state_id: format!("state-{}", identifier),
             assignee: assignee.clone(),
             assignee_id: assignee.map(|_| format!("user-{}", identifier)),
             team: Some("TEST".to_string()),
+            team_id: format!("team-{}", identifier),
         }
     }
 
@@ -1106,6 +1108,7 @@ mod tests {
             title: "Fix login race condition".to_string(),
             description: Some("Users are experiencing race conditions when logging in simultaneously from multiple devices.".to_string()),
             state: IssueState {
+                id: "state-progress-123".to_string(),
                 name: "In Progress".to_string(),
                 type_: "started".to_string(),
             },
@@ -1114,6 +1117,7 @@ mod tests {
                 email: "john@example.com".to_string(),
             }),
             team: Some(IssueTeam {
+                id: "team-eng-123".to_string(),
                 key: "ENG".to_string(),
                 name: "Engineering".to_string(),
             }),
@@ -1207,6 +1211,7 @@ mod tests {
             title: "Simple issue".to_string(),
             description: None,
             state: IssueState {
+                id: "state-todo-456".to_string(),
                 name: "Todo".to_string(),
                 type_: "unstarted".to_string(),
             },
@@ -1273,6 +1278,7 @@ Final paragraph with normal text."#
                     .to_string(),
             ),
             state: IssueState {
+                id: "state-progress-123".to_string(),
                 name: "In Progress".to_string(),
                 type_: "started".to_string(),
             },
@@ -1281,6 +1287,7 @@ Final paragraph with normal text."#
                 email: "test@example.com".to_string(),
             }),
             team: Some(IssueTeam {
+                id: "team-eng-123".to_string(),
                 key: "ENG".to_string(),
                 name: "Engineering".to_string(),
             }),
@@ -1626,6 +1633,7 @@ Test with:
                 .to_string(),
             ),
             state: IssueState {
+                id: "state-todo-999".to_string(),
                 name: "Todo".to_string(),
                 type_: "unstarted".to_string(),
             },

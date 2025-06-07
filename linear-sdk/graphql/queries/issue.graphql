@@ -5,6 +5,7 @@ query GetIssue($id: String!) {
     title
     description
     state {
+      id
       name
       type
     }
@@ -13,6 +14,7 @@ query GetIssue($id: String!) {
       email
     }
     team {
+      id
       key
       name
     }
