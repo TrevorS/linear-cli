@@ -1,0 +1,26 @@
+query ListTeamStates($teamId: String!) {
+  team(id: $teamId) {
+    id
+    key
+    name
+    states {
+      nodes {
+        id
+        name
+        type
+        description
+        position
+      }
+    }
+    defaultIssueState {
+      id
+      name
+      type
+    }
+    markedAsDuplicateWorkflowState {
+      id
+      name
+      type
+    }
+  }
+}

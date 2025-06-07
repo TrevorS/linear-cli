@@ -5,6 +5,7 @@ query ListIssues($first: Int!, $filter: IssueFilter) {
       identifier
       title
       state {
+        id
         name
       }
       assignee {
@@ -12,6 +13,7 @@ query ListIssues($first: Int!, $filter: IssueFilter) {
         name
       }
       team {
+        id
         key
       }
     }
