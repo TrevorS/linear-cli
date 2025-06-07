@@ -1,0 +1,22 @@
+mutation CreateComment($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+    comment {
+      id
+      body
+      user {
+        id
+        name
+        email
+      }
+      issue {
+        id
+        identifier
+        title
+      }
+      createdAt
+      updatedAt
+    }
+    lastSyncId
+  }
+}

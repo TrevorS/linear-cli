@@ -321,3 +321,119 @@ pub fn mock_create_issue_validation_error_response() -> serde_json::Value {
         ]
     })
 }
+
+#[cfg(test)]
+pub fn mock_update_issue_success_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueUpdate": {
+                "success": true,
+                "issue": {
+                    "id": "updated-issue-123",
+                    "identifier": "ENG-123",
+                    "title": "Updated Issue Title",
+                    "description": "Updated issue description",
+                    "state": {
+                        "id": "state-456",
+                        "name": "In Progress",
+                        "type": "started"
+                    },
+                    "assignee": {
+                        "id": "user-789",
+                        "name": "Jane Doe",
+                        "email": "jane@example.com"
+                    },
+                    "team": {
+                        "id": "team-123",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    },
+                    "labels": {
+                        "nodes": [
+                            {
+                                "id": "label-456",
+                                "name": "enhancement",
+                                "color": "#00ff00"
+                            }
+                        ]
+                    },
+                    "priority": 3.0,
+                    "priorityLabel": "Normal",
+                    "createdAt": "2024-01-15T10:30:00Z",
+                    "updatedAt": "2024-01-16T16:00:00Z",
+                    "url": "https://linear.app/test/issue/ENG-123"
+                },
+                "lastSyncId": 654321
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_update_issue_failure_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "issueUpdate": {
+                "success": false,
+                "issue": null,
+                "lastSyncId": 654321
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_update_issue_not_found_response() -> serde_json::Value {
+    json!({
+        "errors": [
+            {
+                "message": "Issue not found",
+                "extensions": {
+                    "code": "NOT_FOUND",
+                    "field": "id"
+                }
+            }
+        ]
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_comment_success_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "commentCreate": {
+                "success": true,
+                "comment": {
+                    "id": "comment-123",
+                    "body": "This is a test comment",
+                    "user": {
+                        "id": "user-456",
+                        "name": "Test User",
+                        "email": "test@example.com"
+                    },
+                    "issue": {
+                        "id": "issue-789",
+                        "identifier": "ENG-123",
+                        "title": "Test Issue"
+                    },
+                    "createdAt": "2024-01-16T16:30:00Z",
+                    "updatedAt": "2024-01-16T16:30:00Z"
+                },
+                "lastSyncId": 789456
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_create_comment_failure_response() -> serde_json::Value {
+    json!({
+        "data": {
+            "commentCreate": {
+                "success": false,
+                "comment": null,
+                "lastSyncId": 789456
+            }
+        }
+    })
+}

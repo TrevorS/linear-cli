@@ -170,6 +170,61 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Update an existing issue
+    Update {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// New title for the issue
+        #[arg(long)]
+        title: Option<String>,
+
+        /// New description for the issue
+        #[arg(long)]
+        description: Option<String>,
+
+        /// New assignee (use "me" for yourself, "unassigned" to unassign)
+        #[arg(long)]
+        assignee: Option<String>,
+
+        /// New status/state for the issue
+        #[arg(long)]
+        status: Option<String>,
+
+        /// New priority (1=Urgent, 2=High, 3=Normal, 4=Low)
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
+        priority: Option<i64>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Close an issue (convenience command)
+    Close {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Reopen an issue (convenience command)
+    Reopen {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+    /// Add a comment to an issue
+    Comment {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Comment text (if not provided, will read from stdin)
+        message: Option<String>,
+    },
     /// Check connection to Linear
     Status {
         /// Show detailed connection info
@@ -1079,6 +1134,335 @@ async fn handle_create_command(
     Ok(())
 }
 
+struct UpdateCommandArgs {
+    id: String,
+    title: Option<String>,
+    description: Option<String>,
+    assignee: Option<String>,
+    status: Option<String>,
+    priority: Option<i64>,
+    force: bool,
+}
+
+async fn handle_update_command(
+    client: &LinearClient,
+    args: UpdateCommandArgs,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Validate that at least one field is being updated
+    if args.title.is_none()
+        && args.description.is_none()
+        && args.assignee.is_none()
+        && args.status.is_none()
+        && args.priority.is_none()
+    {
+        cli_output.error("At least one field must be specified for update");
+        eprintln!("Use --title, --description, --assignee, --status, or --priority");
+        std::process::exit(1);
+    }
+
+    // Resolve assignee if provided
+    let assignee_id = if let Some(assignee_value) = args.assignee {
+        if assignee_value.trim().is_empty() || assignee_value.eq_ignore_ascii_case("unassigned") {
+            Some(String::new()) // Empty string to unassign
+        } else if assignee_value.eq_ignore_ascii_case("me") {
+            let viewer_data = client.execute_viewer_query().await?;
+            Some(viewer_data.viewer.id)
+        } else {
+            // Could be UUID or email/name - pass as-is for now
+            Some(assignee_value)
+        }
+    } else {
+        None
+    };
+
+    // TODO: Resolve status to state_id if provided
+    let state_id = args.status; // For now, pass as-is
+
+    let input = linear_sdk::UpdateIssueInput {
+        title: args.title,
+        description: args.description,
+        assignee_id,
+        state_id,
+        priority: args.priority,
+        label_ids: None, // Future enhancement
+    };
+
+    // Show preview unless --force is used
+    if !args.force && is_interactive {
+        println!("Would update issue {}:", args.id);
+        if let Some(ref title) = input.title {
+            println!("  Title: {}", title);
+        }
+        if let Some(ref description) = input.description {
+            println!("  Description: {}", description);
+        }
+        if let Some(ref assignee_id) = input.assignee_id {
+            if assignee_id.is_empty() {
+                println!("  Assignee: Unassigned");
+            } else {
+                println!("  Assignee: {}", assignee_id);
+            }
+        }
+        if let Some(ref state_id) = input.state_id {
+            println!("  Status: {}", state_id);
+        }
+        if let Some(priority) = input.priority {
+            println!("  Priority: {}", priority);
+        }
+        println!();
+
+        print!("Continue with update? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response).unwrap();
+        let response = response.trim().to_lowercase();
+
+        if response != "y" && response != "yes" {
+            cli_output.info("Update cancelled");
+            return Ok(());
+        }
+    }
+
+    let spinner = create_spinner("Updating issue...", is_interactive);
+    match client.update_issue(args.id.clone(), input).await {
+        Ok(updated_issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!("Updated issue: {}", updated_issue.identifier));
+                println!("Title: {}", updated_issue.title);
+                if let Some(desc) = &updated_issue.description {
+                    println!("Description: {}", desc);
+                }
+                println!("Status: {}", updated_issue.state.name);
+                if let Some(assignee) = &updated_issue.assignee {
+                    println!("Assignee: {}", assignee.name);
+                }
+                if let Some(team) = &updated_issue.team {
+                    println!("Team: {} ({})", team.name, team.key);
+                }
+                println!("URL: {}", updated_issue.url);
+            } else {
+                // Non-interactive: just print the identifier for scripting
+                println!("{}", updated_issue.identifier);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_close_command(
+    client: &LinearClient,
+    id: String,
+    force: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Show preview unless --force is used
+    if !force && is_interactive {
+        println!("Would close issue: {}", id);
+        println!();
+
+        print!("Continue with close? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response).unwrap();
+        let response = response.trim().to_lowercase();
+
+        if response != "y" && response != "yes" {
+            cli_output.info("Close cancelled");
+            return Ok(());
+        }
+    }
+
+    // TODO: Get the actual "Done" state ID from the team's workflow
+    // For now, use a common status name
+    let input = linear_sdk::UpdateIssueInput {
+        title: None,
+        description: None,
+        assignee_id: None,
+        state_id: Some("Done".to_string()), // This will need to be resolved to actual state ID
+        priority: None,
+        label_ids: None,
+    };
+
+    let spinner = create_spinner("Closing issue...", is_interactive);
+    match client.update_issue(id.clone(), input).await {
+        Ok(updated_issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!("Closed issue: {}", updated_issue.identifier));
+                println!("Status: {}", updated_issue.state.name);
+                println!("URL: {}", updated_issue.url);
+            } else {
+                println!("{}", updated_issue.identifier);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_reopen_command(
+    client: &LinearClient,
+    id: String,
+    force: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Show preview unless --force is used
+    if !force && is_interactive {
+        println!("Would reopen issue: {}", id);
+        println!();
+
+        print!("Continue with reopen? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response).unwrap();
+        let response = response.trim().to_lowercase();
+
+        if response != "y" && response != "yes" {
+            cli_output.info("Reopen cancelled");
+            return Ok(());
+        }
+    }
+
+    // TODO: Get the actual "Todo" or "In Progress" state ID from the team's workflow
+    // For now, use a common status name
+    let input = linear_sdk::UpdateIssueInput {
+        title: None,
+        description: None,
+        assignee_id: None,
+        state_id: Some("Todo".to_string()), // This will need to be resolved to actual state ID
+        priority: None,
+        label_ids: None,
+    };
+
+    let spinner = create_spinner("Reopening issue...", is_interactive);
+    match client.update_issue(id.clone(), input).await {
+        Ok(updated_issue) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!("Reopened issue: {}", updated_issue.identifier));
+                println!("Status: {}", updated_issue.state.name);
+                println!("URL: {}", updated_issue.url);
+            } else {
+                println!("{}", updated_issue.identifier);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_comment_command(
+    client: &LinearClient,
+    id: String,
+    message: Option<String>,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Get comment body from argument or stdin
+    let body = if let Some(msg) = message {
+        msg
+    } else {
+        // Read from stdin
+        use std::io::Read;
+        let mut buffer = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buffer) {
+            cli_output.error(&format!("Failed to read from stdin: {}", e));
+            std::process::exit(1);
+        }
+
+        if buffer.trim().is_empty() {
+            cli_output.error("Comment body cannot be empty");
+            eprintln!("Provide a message argument or pipe content to stdin");
+            std::process::exit(1);
+        }
+
+        buffer.trim().to_string()
+    };
+
+    let input = linear_sdk::CreateCommentInput { body, issue_id: id };
+
+    let spinner = create_spinner("Adding comment...", is_interactive);
+    match client.create_comment(input).await {
+        Ok(created_comment) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+
+            if is_interactive {
+                cli_output.success(&format!(
+                    "Added comment to issue: {}",
+                    created_comment.issue.identifier
+                ));
+                println!("Comment: {}", created_comment.body);
+                println!("Author: {}", created_comment.user.name);
+                println!(
+                    "Issue: {} - {}",
+                    created_comment.issue.identifier, created_comment.issue.title
+                );
+            } else {
+                // Non-interactive: just print the comment ID for scripting
+                println!("{}", created_comment.id);
+            }
+        }
+        Err(e) => {
+            if let Some(s) = spinner {
+                s.finish_and_clear();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
 async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
     // Authentication priority:
     // 1. LINEAR_API_KEY env var
@@ -1438,6 +1822,40 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
             // These commands are handled earlier, this should never be reached
             unreachable!()
         }
+        Commands::Update {
+            id,
+            title,
+            description,
+            assignee,
+            status,
+            priority,
+            force,
+        } => {
+            handle_update_command(
+                &client,
+                UpdateCommandArgs {
+                    id,
+                    title,
+                    description,
+                    assignee,
+                    status,
+                    priority,
+                    force,
+                },
+                use_color,
+                is_interactive,
+            )
+            .await?;
+        }
+        Commands::Close { id, force } => {
+            handle_close_command(&client, id, force, use_color, is_interactive).await?;
+        }
+        Commands::Reopen { id, force } => {
+            handle_reopen_command(&client, id, force, use_color, is_interactive).await?;
+        }
+        Commands::Comment { id, message } => {
+            handle_comment_command(&client, id, message, use_color, is_interactive).await?;
+        }
         #[cfg(feature = "inline-images")]
         Commands::Images { action } => {
             handle_images_command(action, use_color, is_interactive).await?
@@ -1508,6 +1926,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1532,6 +1954,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1556,6 +1982,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1580,6 +2010,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1604,6 +2038,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1709,6 +2147,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1731,6 +2173,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1753,6 +2199,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1785,6 +2235,10 @@ mod tests {
             }
             Commands::Issue { .. } => panic!("Expected Issues command"),
             Commands::Create { .. } => panic!("Expected Issues command"),
+            Commands::Update { .. } => panic!("Expected Issues command"),
+            Commands::Close { .. } => panic!("Expected Issues command"),
+            Commands::Reopen { .. } => panic!("Expected Issues command"),
+            Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
