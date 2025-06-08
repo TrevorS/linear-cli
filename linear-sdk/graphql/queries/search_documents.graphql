@@ -1,6 +1,6 @@
-query SearchDocuments($query: String!, $first: Int!, $includeArchived: Boolean) {
+query SearchDocuments($term: String!, $first: Int!, $includeArchived: Boolean) {
   searchDocuments(
-    query: $query
+    term: $term
     first: $first
     includeArchived: $includeArchived
   ) {

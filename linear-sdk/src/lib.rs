@@ -1302,7 +1302,7 @@ impl LinearClient {
         include_archived: bool,
     ) -> Result<Vec<Issue>> {
         let variables = search_issues::Variables {
-            query: query.to_string(),
+            term: query.to_string(),
             first: limit as i64,
             include_archived: Some(include_archived),
         };
@@ -1336,7 +1336,7 @@ impl LinearClient {
         include_archived: bool,
     ) -> Result<Vec<Document>> {
         let variables = search_documents::Variables {
-            query: query.to_string(),
+            term: query.to_string(),
             first: limit as i64,
             include_archived: Some(include_archived),
         };
