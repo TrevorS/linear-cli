@@ -1,0 +1,61 @@
+query SemanticSearch($query: String!, $includeArchived: Boolean) {
+  semanticSearch(
+    query: $query
+    includeArchived: $includeArchived
+  ) {
+    ... on IssueSearchResult {
+      id
+      identifier
+      title
+      description
+      url
+      state {
+        id
+        name
+      }
+      assignee {
+        id
+        name
+      }
+      team {
+        id
+        key
+        name
+      }
+      createdAt
+      updatedAt
+    }
+    ... on DocumentSearchResult {
+      id
+      title
+      url
+      content
+      createdAt
+      updatedAt
+      creator {
+        id
+        name
+      }
+      project {
+        id
+        name
+      }
+    }
+    ... on ProjectSearchResult {
+      id
+      name
+      description
+      url
+      state
+      createdAt
+      updatedAt
+      teams {
+        nodes {
+          id
+          key
+          name
+        }
+      }
+    }
+  }
+}

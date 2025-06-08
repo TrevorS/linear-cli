@@ -1,0 +1,30 @@
+query SearchDocuments($term: String!, $first: Int!, $includeArchived: Boolean) {
+  searchDocuments(
+    term: $term
+    first: $first
+    includeArchived: $includeArchived
+  ) {
+    nodes {
+      id
+      title
+      url
+      content
+      createdAt
+      updatedAt
+      creator {
+        id
+        name
+      }
+      project {
+        id
+        name
+      }
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+  }
+}

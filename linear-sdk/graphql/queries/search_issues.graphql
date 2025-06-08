@@ -1,0 +1,36 @@
+query SearchIssues($term: String!, $first: Int!, $includeArchived: Boolean) {
+  searchIssues(
+    term: $term
+    first: $first
+    includeArchived: $includeArchived
+  ) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      url
+      state {
+        id
+        name
+      }
+      assignee {
+        id
+        name
+      }
+      team {
+        id
+        key
+        name
+      }
+      createdAt
+      updatedAt
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+  }
+}
