@@ -1,0 +1,19 @@
+query ListProjects($first: Int!) {
+  projects(first: $first) {
+    nodes {
+      id
+      name
+      description
+      state
+      progress
+      url
+      createdAt
+      updatedAt
+      lead {
+        id
+        name
+        displayName
+      }
+    }
+  }
+}

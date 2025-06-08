@@ -1,0 +1,21 @@
+query GetIssueComments($issueId: String!, $first: Int!) {
+  issue(id: $issueId) {
+    id
+    identifier
+    title
+    comments(first: $first) {
+      nodes {
+        id
+        body
+        createdAt
+        updatedAt
+        user {
+          id
+          name
+          displayName
+          email
+        }
+      }
+    }
+  }
+}
