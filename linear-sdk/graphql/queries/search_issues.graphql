@@ -1,0 +1,38 @@
+query SearchIssues($query: String!, $first: Int!, $includeArchived: Boolean) {
+  searchIssues(
+    filter: {
+      searchableContent: { contains: $query }
+    }
+    first: $first
+    includeArchived: $includeArchived
+  ) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      url
+      state {
+        id
+        name
+      }
+      assignee {
+        id
+        name
+      }
+      team {
+        id
+        key
+        name
+      }
+      createdAt
+      updatedAt
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+  }
+}

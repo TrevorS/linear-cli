@@ -15,6 +15,7 @@ mod frontmatter;
 mod interactive;
 mod output;
 mod preferences;
+mod search;
 mod templates;
 mod types;
 
@@ -298,6 +299,39 @@ enum Commands {
         /// Pretty print JSON output
         #[arg(long, requires = "json")]
         pretty: bool,
+    },
+    /// Search across issues, projects, and comments
+    Search {
+        /// Search query string
+        query: String,
+
+        /// Search only in issues (default: search all types)
+        #[arg(long)]
+        issues_only: bool,
+
+        /// Search only in documents
+        #[arg(long)]
+        docs_only: bool,
+
+        /// Search only in projects
+        #[arg(long)]
+        projects_only: bool,
+
+        /// Maximum number of results per type
+        #[arg(short, long, default_value = "10", value_parser = clap::value_parser!(i32).range(1..=100))]
+        limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+
+        /// Include archived results
+        #[arg(long)]
+        include_archived: bool,
     },
     /// Manage image cache and diagnostics (requires inline-images feature)
     #[cfg(feature = "inline-images")]
@@ -2117,6 +2151,104 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
             };
             println!("{}", output);
         }
+        Commands::Search {
+            query,
+            issues_only,
+            docs_only,
+            projects_only,
+            limit,
+            json,
+            pretty,
+            include_archived,
+        } => {
+            use crate::search::{SearchOptions, search};
+
+            let spinner = create_spinner("Searching...", is_interactive);
+
+            let options = SearchOptions {
+                query,
+                issues_only,
+                docs_only,
+                projects_only,
+                limit,
+                include_archived,
+            };
+
+            let result = match search(&client, options).await {
+                Ok(result) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    result
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            if json {
+                let output = if pretty {
+                    match serde_json::to_string_pretty(&result) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    match serde_json::to_string(&result) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                };
+                println!("{}", output);
+            } else {
+                // Display grouped results
+                let has_results = !result.issues.is_empty()
+                    || !result.documents.is_empty()
+                    || !result.projects.is_empty();
+
+                if !has_results {
+                    if is_interactive {
+                        println!("No results found.");
+                    }
+                } else {
+                    if !result.issues.is_empty() {
+                        println!("Issues:");
+                        for issue in &result.issues {
+                            println!("  {}: {}", issue.identifier, issue.title);
+                        }
+                        if !result.documents.is_empty() || !result.projects.is_empty() {
+                            println!();
+                        }
+                    }
+
+                    if !result.documents.is_empty() {
+                        println!("Documents:");
+                        for doc in &result.documents {
+                            println!("  {}: {}", doc.title, doc.url);
+                        }
+                        if !result.projects.is_empty() {
+                            println!();
+                        }
+                    }
+
+                    if !result.projects.is_empty() {
+                        println!("Projects:");
+                        for project in &result.projects {
+                            println!("  {}: {}", project.name, project.url);
+                        }
+                    }
+                }
+            }
+        }
         #[cfg(feature = "inline-images")]
         Commands::Images { action } => {
             handle_images_command(action, use_color, is_interactive).await?
@@ -2195,6 +2327,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2227,6 +2360,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2259,6 +2393,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2291,6 +2426,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2323,6 +2459,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2352,6 +2489,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issue command"),
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2369,6 +2507,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issue command"),
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2386,6 +2525,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issue command"),
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2403,6 +2543,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issue command"),
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2420,6 +2561,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issue command"),
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2456,6 +2598,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2486,6 +2629,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2516,6 +2660,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2556,6 +2701,7 @@ mod tests {
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
             Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
