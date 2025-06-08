@@ -131,6 +131,66 @@ pub struct CreateComment;
 )]
 pub struct ListTeamStates;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/projects.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListProjects;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/comments.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct GetIssueComments;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/my_work.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct GetMyWork;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/search_issues.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct SearchIssues;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/search_documents.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct SearchDocuments;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/semantic_search.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct SemanticSearch;
+
 pub use viewer::ResponseData as ViewerResponseData;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -249,6 +309,90 @@ pub struct CreateCommentInput {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub state: String,
+    pub progress: Option<f64>,
+    pub url: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub lead: Option<ProjectLead>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTeam {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLead {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    pub id: String,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub user: CommentUser,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueWithComments {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
+    pub comments: Vec<Comment>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MyWork {
+    pub assigned_issues: Vec<Issue>,
+    pub created_issues: Vec<Issue>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub issues: Vec<Issue>,
+    pub documents: Vec<Document>,
+    pub projects: Vec<Project>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Document {
+    pub id: String,
+    pub title: String,
+    pub content: Option<String>,
+    pub url: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub creator: Option<User>,
+    pub project: Option<ProjectInfo>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdatedIssue {
     pub id: String,
     pub identifier: String,
@@ -332,7 +476,17 @@ pub struct Team {
     pub key: String,
     pub name: String,
     pub description: Option<String>,
-    pub members: Vec<User>,
+    pub members: Vec<TeamMember>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMember {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub email: String,
+    pub active: bool,
 }
 
 pub struct LinearClient {
@@ -981,18 +1135,144 @@ impl LinearClient {
                     .members
                     .nodes
                     .into_iter()
-                    .map(|member| User {
+                    .map(|member| TeamMember {
                         id: member.id,
                         name: member.name,
-                        display_name: Some(member.display_name),
+                        display_name: member.display_name,
                         email: member.email,
                         active: member.active,
-                        guest: false, // Team members are not guests by default
                     })
                     .collect(),
             })
             .collect();
         Ok(teams)
+    }
+
+    pub async fn list_projects(&self, limit: i32) -> Result<Vec<Project>> {
+        let variables = list_projects::Variables {
+            first: limit as i64,
+        };
+
+        let data = self.execute_graphql::<ListProjects, _>(variables).await?;
+        let projects = data
+            .projects
+            .nodes
+            .into_iter()
+            .map(|project| Project {
+                id: project.id,
+                name: project.name,
+                description: Some(project.description),
+                #[allow(deprecated)]
+                state: project.state,
+                progress: Some(project.progress),
+                url: project.url,
+                created_at: project.created_at,
+                updated_at: project.updated_at,
+                lead: project.lead.map(|lead| ProjectLead {
+                    id: lead.id,
+                    name: lead.name,
+                    display_name: lead.display_name,
+                }),
+            })
+            .collect();
+        Ok(projects)
+    }
+
+    pub async fn get_issue_comments(
+        &self,
+        issue_id: &str,
+        limit: i32,
+    ) -> Result<IssueWithComments> {
+        let variables = get_issue_comments::Variables {
+            issue_id: issue_id.to_string(),
+            first: limit as i64,
+        };
+
+        let data = self
+            .execute_graphql::<GetIssueComments, _>(variables)
+            .await?;
+        let issue = data.issue;
+
+        let comments = issue
+            .comments
+            .nodes
+            .into_iter()
+            .map(|comment| Comment {
+                id: comment.id,
+                body: comment.body,
+                created_at: comment.created_at,
+                updated_at: comment.updated_at,
+                user: if let Some(user) = comment.user {
+                    CommentUser {
+                        id: user.id,
+                        name: user.name,
+                        email: user.email,
+                    }
+                } else {
+                    CommentUser {
+                        id: "unknown".to_string(),
+                        name: "Unknown User".to_string(),
+                        email: "unknown@example.com".to_string(),
+                    }
+                },
+            })
+            .collect();
+
+        Ok(IssueWithComments {
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            comments,
+        })
+    }
+
+    pub async fn get_my_work(&self, limit: i32) -> Result<MyWork> {
+        let variables = get_my_work::Variables {
+            first: limit as i64,
+        };
+
+        let data = self.execute_graphql::<GetMyWork, _>(variables).await?;
+
+        let assigned_issues = data
+            .viewer
+            .assigned_issues
+            .nodes
+            .into_iter()
+            .map(|issue| Issue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                status: issue.state.name,
+                state_id: issue.state.id,
+                assignee: None, // Self-assigned, not needed
+                assignee_id: None,
+                team: Some(issue.team.key),
+                team_id: issue.team.id,
+            })
+            .collect();
+
+        let created_issues = data
+            .viewer
+            .created_issues
+            .nodes
+            .into_iter()
+            .map(|issue| Issue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                status: issue.state.name,
+                state_id: issue.state.id,
+                assignee: issue.assignee.as_ref().map(|a| a.display_name.clone()),
+                assignee_id: issue.assignee.map(|a| a.id),
+                team: Some(issue.team.key),
+                team_id: issue.team.id,
+            })
+            .collect();
+
+        Ok(MyWork {
+            assigned_issues,
+            created_issues,
+        })
     }
 
     pub async fn search_users(&self, query: &str, limit: i32) -> Result<Vec<User>> {
@@ -1390,6 +1670,81 @@ impl LinearClient {
                     .join(", ")
             ),
         })
+    }
+
+    pub async fn search_issues(
+        &self,
+        query: &str,
+        limit: i32,
+        include_archived: bool,
+    ) -> Result<Vec<Issue>> {
+        let variables = search_issues::Variables {
+            query: query.to_string(),
+            first: limit as i64,
+            include_archived: Some(include_archived),
+        };
+
+        let data = self.execute_graphql::<SearchIssues, _>(variables).await?;
+
+        Ok(data
+            .search_issues
+            .nodes
+            .into_iter()
+            .map(|issue| Issue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                status: issue.state.name,
+                state_id: issue.state.id,
+                assignee: issue.assignee.as_ref().map(|a| a.name.clone()),
+                assignee_id: issue.assignee.as_ref().map(|a| a.id.clone()),
+                team: Some(issue.team.key),
+                team_id: issue.team.id,
+            })
+            .collect())
+    }
+
+    pub async fn search_documents(
+        &self,
+        query: &str,
+        limit: i32,
+        include_archived: bool,
+    ) -> Result<Vec<Document>> {
+        let variables = search_documents::Variables {
+            query: query.to_string(),
+            first: limit as i64,
+            include_archived: Some(include_archived),
+        };
+
+        let data = self
+            .execute_graphql::<SearchDocuments, _>(variables)
+            .await?;
+
+        Ok(data
+            .search_documents
+            .nodes
+            .into_iter()
+            .map(|doc| Document {
+                id: doc.id,
+                title: doc.title,
+                content: doc.content,
+                url: doc.url,
+                created_at: doc.created_at,
+                updated_at: doc.updated_at,
+                creator: doc.creator.map(|c| User {
+                    id: c.id,
+                    name: c.name,
+                    display_name: None,
+                    email: "".to_string(), // Not available in search results
+                    active: true,
+                    guest: false,
+                }),
+                project: doc.project.map(|p| ProjectInfo {
+                    id: p.id,
+                    name: p.name,
+                }),
+            })
+            .collect())
     }
 }
 

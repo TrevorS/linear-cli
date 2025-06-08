@@ -15,6 +15,7 @@ mod frontmatter;
 mod interactive;
 mod output;
 mod preferences;
+mod search;
 mod templates;
 mod types;
 
@@ -244,6 +245,94 @@ enum Commands {
     /// Logout and clear stored credentials (requires oauth feature)
     #[cfg(feature = "oauth")]
     Logout,
+    /// List projects
+    Projects {
+        /// Maximum number of projects to fetch
+        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
+        limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
+    /// List teams
+    Teams {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
+    /// Show comments for an issue
+    Comments {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Maximum number of comments to fetch
+        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
+        limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
+    /// Show your assigned and created issues
+    MyWork {
+        /// Maximum number of issues to fetch per category
+        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
+        limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+    },
+    /// Search across issues, projects, and comments
+    Search {
+        /// Search query string
+        query: String,
+
+        /// Search only in issues (default: search all types)
+        #[arg(long)]
+        issues_only: bool,
+
+        /// Search only in documents
+        #[arg(long)]
+        docs_only: bool,
+
+        /// Search only in projects
+        #[arg(long)]
+        projects_only: bool,
+
+        /// Maximum number of results per type
+        #[arg(short, long, default_value = "10", value_parser = clap::value_parser!(i32).range(1..=100))]
+        limit: i32,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty print JSON output
+        #[arg(long, requires = "json")]
+        pretty: bool,
+
+        /// Include archived results
+        #[arg(long)]
+        include_archived: bool,
+    },
     /// Manage image cache and diagnostics (requires inline-images feature)
     #[cfg(feature = "inline-images")]
     Images {
@@ -1881,6 +1970,298 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
         Commands::Comment { id, message } => {
             handle_comment_command(&client, id, message, use_color, is_interactive).await?;
         }
+        Commands::Projects {
+            limit,
+            json,
+            pretty: _,
+        } => {
+            let spinner = create_spinner("Fetching projects...", is_interactive);
+            let projects = match client.list_projects(limit).await {
+                Ok(projects) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    projects
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            if projects.is_empty() && !json && is_interactive {
+                println!("No projects found.");
+            } else if !projects.is_empty() {
+                let output = if json {
+                    match serde_json::to_string_pretty(&projects) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    projects
+                        .iter()
+                        .map(|p| format!("{}: {} ({})", p.id, p.name, p.state))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                println!("{}", output);
+            }
+        }
+        Commands::Teams { json, pretty: _ } => {
+            let spinner = create_spinner("Fetching teams...", is_interactive);
+            let teams = match client.list_teams().await {
+                Ok(teams) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    teams
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            if teams.is_empty() && !json && is_interactive {
+                println!("No teams found.");
+            } else if !teams.is_empty() {
+                let output = if json {
+                    match serde_json::to_string_pretty(&teams) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    teams
+                        .iter()
+                        .map(|t| format!("{}: {} ({} members)", t.key, t.name, t.members.len()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                println!("{}", output);
+            }
+        }
+        Commands::Comments {
+            id,
+            limit,
+            json,
+            pretty: _,
+        } => {
+            let spinner = create_spinner("Fetching comments...", is_interactive);
+            let issue_with_comments = match client.get_issue_comments(&id, limit).await {
+                Ok(result) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    result
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            if issue_with_comments.comments.is_empty() && !json && is_interactive {
+                println!("No comments found for issue {}.", id);
+            } else {
+                let output = if json {
+                    match serde_json::to_string_pretty(&issue_with_comments) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    format!(
+                        "Issue: {} - {}\n\nComments:\n{}",
+                        issue_with_comments.identifier,
+                        issue_with_comments.title,
+                        issue_with_comments
+                            .comments
+                            .iter()
+                            .map(|c| format!("{}: {}", c.user.name, c.body))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                };
+                println!("{}", output);
+            }
+        }
+        Commands::MyWork {
+            limit,
+            json,
+            pretty: _,
+        } => {
+            let spinner = create_spinner("Fetching your work...", is_interactive);
+            let my_work = match client.get_my_work(limit).await {
+                Ok(work) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    work
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            let output = if json {
+                match serde_json::to_string_pretty(&my_work) {
+                    Ok(output) => output,
+                    Err(e) => {
+                        display_error(&LinearError::from(e), use_color);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                format!(
+                    "Assigned to you:\n{}\n\nCreated by you:\n{}",
+                    my_work
+                        .assigned_issues
+                        .iter()
+                        .map(|i| format!("{}: {}", i.identifier, i.title))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    my_work
+                        .created_issues
+                        .iter()
+                        .map(|i| format!("{}: {}", i.identifier, i.title))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            };
+            println!("{}", output);
+        }
+        Commands::Search {
+            query,
+            issues_only,
+            docs_only,
+            projects_only,
+            limit,
+            json,
+            pretty,
+            include_archived,
+        } => {
+            let search_options = search::SearchOptions {
+                query,
+                issues_only,
+                docs_only,
+                projects_only,
+                limit,
+                include_archived,
+            };
+
+            let spinner = create_spinner("Searching...", is_interactive);
+            let search_results = match search::search(&client, search_options).await {
+                Ok(results) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    results
+                }
+                Err(e) => {
+                    if let Some(s) = spinner {
+                        s.finish_and_clear();
+                    }
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            };
+
+            if json {
+                let output = if pretty {
+                    match serde_json::to_string_pretty(&search_results) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    match serde_json::to_string(&search_results) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            display_error(&LinearError::from(e), use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                };
+                println!("{}", output);
+            } else {
+                // Format search results in grouped format
+                let mut output_sections = Vec::new();
+
+                if !search_results.issues.is_empty() {
+                    let formatter = TableFormatter::new_with_interactive(use_color, is_interactive);
+                    match formatter.format_issues(&search_results.issues) {
+                        Ok(formatted) => {
+                            output_sections.push(format!(
+                                "Issues ({}):\n{}",
+                                search_results.issues.len(),
+                                formatted
+                            ));
+                        }
+                        Err(e) => {
+                            display_error(&e, use_color);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                if !search_results.documents.is_empty() {
+                    output_sections.push(format!(
+                        "Documents ({}):\n{}",
+                        search_results.documents.len(),
+                        search_results
+                            .documents
+                            .iter()
+                            .map(|d| format!("  {} - {}", d.title, d.url))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+
+                if !search_results.projects.is_empty() {
+                    output_sections.push(format!(
+                        "Projects ({}):\n{}",
+                        search_results.projects.len(),
+                        search_results
+                            .projects
+                            .iter()
+                            .map(|p| format!("  {} - {}", p.name, p.url))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+
+                if output_sections.is_empty() {
+                    if is_interactive {
+                        println!("No results found.");
+                    }
+                } else {
+                    println!("{}", output_sections.join("\n\n"));
+                }
+            }
+        }
         #[cfg(feature = "inline-images")]
         Commands::Images { action } => {
             handle_images_command(action, use_color, is_interactive).await?
@@ -1955,6 +2336,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -1983,6 +2369,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2011,6 +2402,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2039,6 +2435,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2067,6 +2468,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2092,6 +2498,11 @@ mod tests {
                 assert!(!raw);
             }
             #[cfg(feature = "oauth")]
+            Commands::Projects { .. } => panic!("Expected Issue command"),
+            Commands::Teams { .. } => panic!("Expected Issue command"),
+            Commands::Comments { .. } => panic!("Expected Issue command"),
+            Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2105,6 +2516,11 @@ mod tests {
                 assert!(!raw);
             }
             #[cfg(feature = "oauth")]
+            Commands::Projects { .. } => panic!("Expected Issue command"),
+            Commands::Teams { .. } => panic!("Expected Issue command"),
+            Commands::Comments { .. } => panic!("Expected Issue command"),
+            Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2118,6 +2534,11 @@ mod tests {
                 assert!(!raw);
             }
             #[cfg(feature = "oauth")]
+            Commands::Projects { .. } => panic!("Expected Issue command"),
+            Commands::Teams { .. } => panic!("Expected Issue command"),
+            Commands::Comments { .. } => panic!("Expected Issue command"),
+            Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2131,6 +2552,11 @@ mod tests {
                 assert!(raw);
             }
             #[cfg(feature = "oauth")]
+            Commands::Projects { .. } => panic!("Expected Issue command"),
+            Commands::Teams { .. } => panic!("Expected Issue command"),
+            Commands::Comments { .. } => panic!("Expected Issue command"),
+            Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2144,6 +2570,11 @@ mod tests {
                 assert!(raw);
             }
             #[cfg(feature = "oauth")]
+            Commands::Projects { .. } => panic!("Expected Issue command"),
+            Commands::Teams { .. } => panic!("Expected Issue command"),
+            Commands::Comments { .. } => panic!("Expected Issue command"),
+            Commands::MyWork { .. } => panic!("Expected Issue command"),
+            Commands::Search { .. } => panic!("Expected Issue command"),
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
             _ => panic!("Expected Issue command"),
         }
@@ -2176,6 +2607,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2202,6 +2638,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2228,6 +2669,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
@@ -2264,6 +2710,11 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Projects { .. } => panic!("Expected Issues command"),
+            Commands::Teams { .. } => panic!("Expected Issues command"),
+            Commands::Comments { .. } => panic!("Expected Issues command"),
+            Commands::MyWork { .. } => panic!("Expected Issues command"),
+            Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
             Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),

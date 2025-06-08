@@ -1,0 +1,54 @@
+query GetMyWork($first: Int!) {
+  viewer {
+    id
+    name
+    displayName
+    assignedIssues(first: $first, filter: { state: { type: { neq: "completed" } } }) {
+      nodes {
+        id
+        identifier
+        title
+        state {
+          id
+          name
+          type
+        }
+        team {
+          id
+          key
+          name
+        }
+        priority
+        createdAt
+        updatedAt
+        url
+      }
+    }
+    createdIssues(first: $first, filter: { state: { type: { neq: "completed" } } }) {
+      nodes {
+        id
+        identifier
+        title
+        state {
+          id
+          name
+          type
+        }
+        assignee {
+          id
+          name
+          displayName
+        }
+        team {
+          id
+          key
+          name
+        }
+        priority
+        createdAt
+        updatedAt
+        url
+      }
+    }
+  }
+}
