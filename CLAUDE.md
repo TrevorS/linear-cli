@@ -13,6 +13,9 @@ The CLI is fully functional and includes:
 - TTY detection for automatic color/formatting adjustments
 - Enhanced error handling with retry logic
 - Comprehensive test coverage with snapshot testing
+- **Configuration file support** with TOML files and XDG compliance
+- **Command aliases** for creating custom shortcuts
+- **Shell completions** for bash, zsh, fish, and powershell
 
 ## Essential Commands
 
@@ -153,6 +156,100 @@ To use OAuth authentication:
 - **Rate Limits**: Headers not observed in testing
 - **Error Format**: Standard GraphQL errors array with extensions
 - **API URL**: `https://api.linear.app/graphql`
+
+## Configuration and Customization
+
+The Linear CLI supports TOML configuration files for setting defaults and creating custom command aliases.
+
+### Configuration Files
+
+Configuration files are loaded in hierarchical order (highest precedence first):
+
+1. `./linear-cli.toml` (project-specific config)
+2. `$XDG_CONFIG_HOME/linear-cli/config.toml` (user config)
+3. `~/.config/linear-cli/config.toml` (fallback user config)
+
+### Example Configuration
+
+```toml
+# Default values for commands
+default_team = "ENG"
+default_assignee = "me"
+preferred_format = "table"
+api_url = "https://api.linear.app/graphql"
+
+# Command aliases
+[aliases]
+my = ["issues", "--assignee", "me"]
+todo = ["issues", "--status", "todo", "--assignee", "me"]
+standup = ["issues", "--team", "ENG", "--updated-after", "yesterday"]
+
+# Shell completion settings
+[completions]
+cache_duration = "1h"
+enable_dynamic = true
+```
+
+### Using Aliases
+
+Once defined in your config file, aliases work like regular commands:
+
+```bash
+linear my                    # Expands to: linear issues --assignee me
+linear todo --limit 5        # Expands to: linear issues --status todo --assignee me --limit 5
+linear standup               # Expands to: linear issues --team ENG --updated-after yesterday
+```
+
+### Configuration Validation
+
+The CLI validates configuration files and provides helpful error messages:
+- **Format validation**: `preferred_format` must be one of: table, json, yaml
+- **Duration validation**: `cache_duration` must end with s, m, h, or d (e.g., "30m", "1h")
+- **Alias validation**: Prevents recursive aliases and cycle detection
+- **TOML syntax**: Clear error messages for invalid TOML syntax
+
+## Shell Completions
+
+Generate shell completions for enhanced command-line experience:
+
+```bash
+# Generate completions for your shell
+linear completions bash      # Output bash completions
+linear completions zsh       # Output zsh completions
+linear completions fish      # Output fish completions
+linear completions powershell # Output powershell completions
+```
+
+### Installation Instructions
+
+**Bash (Linux):**
+```bash
+linear completions bash > ~/.local/share/bash-completion/completions/linear
+```
+
+**Bash (macOS with Homebrew):**
+```bash
+linear completions bash > $(brew --prefix)/etc/bash_completion.d/linear
+```
+
+**Zsh:**
+```bash
+linear completions zsh > ~/.zfunc/_linear
+# Add to ~/.zshrc: fpath=(~/.zfunc $fpath)
+```
+
+**Fish:**
+```bash
+linear completions fish > ~/.config/fish/completions/linear.fish
+```
+
+**PowerShell:**
+```bash
+linear completions powershell > linear_completions.ps1
+# Then source it in your PowerShell profile
+```
+
+**Note**: You may need to restart your shell or source the completion file after installation.
 
 ## Snapshot Testing
 

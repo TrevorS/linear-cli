@@ -9,7 +9,10 @@ use secrecy::SecretString;
 use std::env;
 use std::io::IsTerminal;
 
+mod aliases;
 mod cli_output;
+mod completions;
+mod config;
 mod constants;
 mod frontmatter;
 mod interactive;
@@ -22,7 +25,9 @@ mod types;
 #[cfg(feature = "inline-images")]
 mod image_protocols;
 
+use crate::aliases::AliasExpander;
 use crate::cli_output::CliOutput;
+use crate::config::Config;
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
 
 fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool) -> bool {
@@ -338,6 +343,12 @@ enum Commands {
     Images {
         #[command(subcommand)]
         action: ImageAction,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: completions::Shell,
     },
 }
 
@@ -776,7 +787,26 @@ async fn handle_images_command(
 fn main() -> Result<()> {
     env_logger::init();
 
-    let cli = Cli::parse();
+    // Load configuration first to get aliases
+    let config = Config::load().unwrap_or_default();
+
+    // Expand aliases in command line arguments before parsing
+    let args = if let Some(ref aliases) = config.aliases {
+        let original_args: Vec<String> = std::env::args().collect();
+        let expander = AliasExpander::new(aliases.clone());
+        match expander.expand(original_args) {
+            Ok(expanded_args) => expanded_args,
+            Err(e) => {
+                eprintln!("Error expanding aliases: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        std::env::args().collect()
+    };
+
+    // Parse the expanded arguments
+    let cli = Cli::parse_from(args);
 
     // Determine if color should be used and if we're interactive
     let is_interactive = std::io::stdout().is_terminal();
@@ -848,11 +878,22 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Completions { shell } => {
+            use crate::completions::CompletionGenerator;
+            use clap::CommandFactory;
+            let generator = CompletionGenerator::new();
+            let mut cmd = Cli::command();
+            generator
+                .generate(*shell, &mut cmd, &mut std::io::stdout())
+                .map_err(|e| LinearError::Configuration(e.to_string()))?;
+            Ok(())
+        }
         _ => {
             // Continue with async commands
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime
-                .block_on(async move { run_async_commands(cli, use_color, is_interactive).await })
+            runtime.block_on(async move {
+                run_async_commands(cli, config, use_color, is_interactive).await
+            })
         }
     }
 }
@@ -1577,7 +1618,76 @@ async fn handle_comment_command(
     Ok(())
 }
 
-async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> Result<()> {
+/// Apply configuration defaults to CLI arguments where not explicitly provided
+fn apply_config_defaults(cli: &mut Cli, config: &Config) {
+    match &mut cli.command {
+        Commands::Issues {
+            assignee,
+            team,
+            json,
+            ..
+        } => {
+            // Apply default assignee if not specified
+            if assignee.is_none() {
+                *assignee = config.default_assignee.clone();
+            }
+
+            // Apply default team if not specified
+            if team.is_none() {
+                *team = config.default_team.clone();
+            }
+
+            // Apply preferred format if not specified and format is table->json
+            if !*json {
+                if let Some(ref format) = config.preferred_format {
+                    if format == "json" {
+                        *json = true;
+                    }
+                }
+            }
+        }
+        Commands::Issue { json, .. } => {
+            // Apply preferred format if not specified
+            if !*json {
+                if let Some(ref format) = config.preferred_format {
+                    if format == "json" {
+                        *json = true;
+                    }
+                }
+            }
+        }
+        Commands::Create { team, assignee, .. } => {
+            // Apply default team if not specified
+            if team.is_none() {
+                *team = config.default_team.clone();
+            }
+
+            // Apply default assignee if not specified
+            if assignee.is_none() {
+                *assignee = config.default_assignee.clone();
+            }
+        }
+        Commands::Update { assignee, .. } => {
+            // Apply default assignee if not specified and not setting to unassigned
+            if assignee.is_none() {
+                *assignee = config.default_assignee.clone();
+            }
+        }
+        _ => {
+            // Other commands don't use configurable defaults
+        }
+    }
+}
+
+async fn run_async_commands(
+    mut cli: Cli,
+    config: Config,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    // Apply config defaults to CLI arguments
+    apply_config_defaults(&mut cli, &config);
+
     // Authentication priority:
     // 1. LINEAR_API_KEY env var
     // 2. OAuth token from keychain (if feature enabled)
@@ -1618,6 +1728,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
             let bearer_token = format!("Bearer {}", auth_token);
             match LinearClient::builder()
                 .auth_token(SecretString::new(bearer_token.into_boxed_str()))
+                .base_url(config.api_url.clone())
                 .verbose(cli.verbose)
                 .build()
             {
@@ -1644,6 +1755,7 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
     } else {
         match LinearClient::builder()
             .auth_token(SecretString::new(auth_token.into_boxed_str()))
+            .base_url(config.api_url.clone())
             .verbose(cli.verbose)
             .build()
         {
@@ -2253,6 +2365,10 @@ async fn run_async_commands(cli: Cli, use_color: bool, is_interactive: bool) -> 
         Commands::Images { action } => {
             handle_images_command(action, use_color, is_interactive).await?
         }
+        Commands::Completions { .. } => {
+            // This should never be reached because completions are handled synchronously above
+            unreachable!("Completions command should be handled synchronously")
+        }
     }
 
     Ok(())
@@ -2330,7 +2446,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2363,7 +2481,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2396,7 +2516,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2429,7 +2551,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2462,7 +2586,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2490,7 +2616,9 @@ mod tests {
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
             Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issue command")
+            }
             _ => panic!("Expected Issue command"),
         }
 
@@ -2508,7 +2636,9 @@ mod tests {
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
             Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issue command")
+            }
             _ => panic!("Expected Issue command"),
         }
 
@@ -2526,7 +2656,9 @@ mod tests {
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
             Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issue command")
+            }
             _ => panic!("Expected Issue command"),
         }
 
@@ -2544,7 +2676,9 @@ mod tests {
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
             Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issue command")
+            }
             _ => panic!("Expected Issue command"),
         }
 
@@ -2562,7 +2696,9 @@ mod tests {
             Commands::Comments { .. } => panic!("Expected Issue command"),
             Commands::MyWork { .. } => panic!("Expected Issue command"),
             Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issue command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issue command")
+            }
             _ => panic!("Expected Issue command"),
         }
 
@@ -2601,7 +2737,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2632,7 +2770,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2663,7 +2803,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
@@ -2704,7 +2846,9 @@ mod tests {
             Commands::Search { .. } => panic!("Expected Issues command"),
             Commands::Status { .. } => panic!("Expected Issues command"),
             #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout => panic!("Expected Issues command"),
+            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
+                panic!("Expected Issues command")
+            }
             #[cfg(feature = "inline-images")]
             Commands::Images { .. } => panic!("Expected Issues command"),
         }
