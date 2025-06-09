@@ -18,6 +18,12 @@ pub struct TemplateManager {
     templates: HashMap<String, IssueTemplate>,
 }
 
+impl Default for TemplateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TemplateManager {
     pub fn new() -> Self {
         let mut templates = HashMap::new();
