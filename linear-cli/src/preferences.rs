@@ -1,8 +1,10 @@
 // ABOUTME: User preferences and smart defaults for the create command
 // ABOUTME: Stores last used settings and provides context-aware defaults
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserPreferences {
@@ -18,6 +20,27 @@ pub struct ContextDefaults {
     pub suggested_title_prefix: Option<String>,
     pub suggested_assignee: Option<String>,
     pub branch_context: Option<String>,
+}
+
+// Lazy-loaded regex patterns for branch parsing
+static BRANCH_TICKET_REGEX: OnceLock<Regex> = OnceLock::new();
+static ISSUE_REGEX: OnceLock<Regex> = OnceLock::new();
+static TEAM_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_branch_ticket_regex() -> &'static Regex {
+    BRANCH_TICKET_REGEX.get_or_init(|| {
+        Regex::new(r"(?:feature|bugfix|hotfix)/([A-Z]+-\d+)").expect("Valid regex pattern")
+    })
+}
+
+fn get_issue_regex() -> &'static Regex {
+    ISSUE_REGEX.get_or_init(|| Regex::new(r"issue-(\d+)").expect("Valid regex pattern"))
+}
+
+fn get_team_regex() -> &'static Regex {
+    TEAM_REGEX.get_or_init(|| {
+        Regex::new(r"(?:feature|bugfix|hotfix)/([A-Z]+)-\d+").expect("Valid regex pattern")
+    })
 }
 
 pub struct PreferencesManager {
@@ -128,20 +151,14 @@ impl PreferencesManager {
 
     fn extract_title_prefix(&self, branch_name: &str) -> Option<String> {
         // Common patterns: feature/ABC-123-description, bugfix/XYZ-456-fix-something
-        if let Some(captures) = regex::Regex::new(r"(?:feature|bugfix|hotfix)/([A-Z]+-\d+)")
-            .ok()?
-            .captures(branch_name)
-        {
+        if let Some(captures) = get_branch_ticket_regex().captures(branch_name) {
             if let Some(ticket) = captures.get(1) {
                 return Some(ticket.as_str().to_string());
             }
         }
 
         // Pattern: issue-123-description
-        if let Some(captures) = regex::Regex::new(r"issue-(\d+)")
-            .ok()?
-            .captures(branch_name)
-        {
+        if let Some(captures) = get_issue_regex().captures(branch_name) {
             if let Some(issue_num) = captures.get(1) {
                 return Some(format!("Issue #{}", issue_num.as_str()));
             }
@@ -152,10 +169,7 @@ impl PreferencesManager {
 
     fn extract_team_from_branch(&self, branch_name: &str) -> Option<String> {
         // Extract team from branch patterns like: feature/ENG-123-description
-        if let Some(captures) = regex::Regex::new(r"(?:feature|bugfix|hotfix)/([A-Z]+)-\d+")
-            .ok()?
-            .captures(branch_name)
-        {
+        if let Some(captures) = get_team_regex().captures(branch_name) {
             if let Some(team) = captures.get(1) {
                 return Some(team.as_str().to_string());
             }
