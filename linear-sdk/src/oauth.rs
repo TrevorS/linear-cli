@@ -2,14 +2,14 @@
 // ABOUTME: Handles browser-based OAuth with PKCE, token storage in system keychain
 
 #[cfg(feature = "oauth")]
-use crate::{Result, constants::urls, storage};
+use crate::{constants::urls, storage, Result};
 #[cfg(feature = "oauth")]
 use std::borrow::Cow;
 
 #[cfg(feature = "oauth")]
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge, RedirectUrl, Scope,
-    TokenResponse, TokenUrl, basic::BasicClient,
+    basic::BasicClient, AuthUrl, AuthorizationCode, ClientId, CsrfToken, PkceCodeChallenge,
+    RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
 
 #[cfg(feature = "oauth")]

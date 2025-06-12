@@ -1,7 +1,7 @@
 // ABOUTME: Benchmark for output rendering performance including table formatting
 // ABOUTME: Tests issue list rendering, markdown parsing, and syntax highlighting
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use linear_cli::output::{JsonFormatter, OutputFormat, TableFormatter};
 use linear_sdk::Issue;
 
@@ -116,7 +116,7 @@ fn main() {
 
     group.bench_function("parse_markdown", |b| {
         b.iter(|| {
-            use pulldown_cmark::{Parser, html};
+            use pulldown_cmark::{html, Parser};
 
             let parser = Parser::new(markdown_text);
             let mut html_output = String::new();

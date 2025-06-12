@@ -1,7 +1,14 @@
 [package]
 name = "linear-sdk"
-version = "0.1.0"
-edition = "2024"
+description = "Rust SDK for Linear API with GraphQL support"
+keywords = ["linear", "api", "graphql", "sdk"]
+categories = ["api-bindings", "development-tools"]
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.98"

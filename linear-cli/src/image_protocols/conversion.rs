@@ -1,7 +1,7 @@
 // ABOUTME: Image format conversion pipeline for terminal compatibility
 // ABOUTME: Converts unsupported formats to terminal-friendly ones with optimization
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use image::{DynamicImage, ImageEncoder, ImageFormat};
 use log;
 use std::io::Cursor;

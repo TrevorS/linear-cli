@@ -2,8 +2,8 @@
 // ABOUTME: Handles base64 encoding and chunking according to Kitty spec
 
 use super::ImageProtocol;
-use anyhow::{Result, anyhow};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub struct KittyProtocol;
 

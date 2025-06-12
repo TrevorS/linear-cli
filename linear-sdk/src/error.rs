@@ -259,11 +259,10 @@ mod tests {
         };
 
         assert_eq!(err.to_string(), "Issue ENG-123 not found");
-        assert!(
-            err.help_text()
-                .unwrap()
-                .contains("check the issue identifier")
-        );
+        assert!(err
+            .help_text()
+            .unwrap()
+            .contains("check the issue identifier"));
         assert!(!err.is_retryable());
 
         // Test suggestion rendering
@@ -459,61 +458,49 @@ mod tests {
             None
         );
         assert!(LinearError::OAuthConfig.help_text().is_some());
-        assert!(
-            LinearError::OAuthConfig
-                .help_text()
-                .unwrap()
-                .contains("linear.app/settings/api/applications/new")
-        );
+        assert!(LinearError::OAuthConfig
+            .help_text()
+            .unwrap()
+            .contains("linear.app/settings/api/applications/new"));
     }
 
     #[test]
     fn test_retryable() {
-        assert!(
-            LinearError::Network {
-                message: "test".to_string(),
-                retryable: true,
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test"))
-            }
-            .is_retryable()
-        );
+        assert!(LinearError::Network {
+            message: "test".to_string(),
+            retryable: true,
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test"))
+        }
+        .is_retryable());
         assert!(LinearError::Timeout.is_retryable());
         assert!(LinearError::RateLimit { reset_seconds: 0 }.is_retryable());
-        assert!(
-            !LinearError::Auth {
-                reason: Cow::Borrowed("test"),
-                source: None
-            }
-            .is_retryable()
-        );
-        assert!(
-            !LinearError::IssueNotFound {
-                identifier: "ENG-123".to_string(),
-                suggestion: None
-            }
-            .is_retryable()
-        );
-        assert!(
-            !LinearError::GraphQL {
-                message: "test".to_string(),
-                errors: vec![]
-            }
-            .is_retryable()
-        );
+        assert!(!LinearError::Auth {
+            reason: Cow::Borrowed("test"),
+            source: None
+        }
+        .is_retryable());
+        assert!(!LinearError::IssueNotFound {
+            identifier: "ENG-123".to_string(),
+            suggestion: None
+        }
+        .is_retryable());
+        assert!(!LinearError::GraphQL {
+            message: "test".to_string(),
+            errors: vec![]
+        }
+        .is_retryable());
     }
 
     #[test]
     fn test_from_reqwest_error() {
         // Since we can't easily create specific reqwest errors in tests,
         // we'll test the conversion logic conceptually
-        assert!(
-            LinearError::Network {
-                message: "test".to_string(),
-                retryable: true,
-                source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test"))
-            }
-            .is_retryable()
-        );
+        assert!(LinearError::Network {
+            message: "test".to_string(),
+            retryable: true,
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test"))
+        }
+        .is_retryable());
         assert!(LinearError::Timeout.is_retryable());
         assert!(LinearError::RateLimit { reset_seconds: 0 }.is_retryable());
     }

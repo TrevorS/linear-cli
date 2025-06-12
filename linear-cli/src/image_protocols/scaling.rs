@@ -1,9 +1,9 @@
 // ABOUTME: Terminal-aware image scaling and dimension management
 // ABOUTME: Automatically resizes images to fit within terminal bounds while preserving aspect ratios
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use crossterm::terminal::size as terminal_size;
-use image::{DynamicImage, ImageFormat, imageops::FilterType};
+use image::{imageops::FilterType, DynamicImage, ImageFormat};
 use log;
 
 #[derive(Debug, Clone)]

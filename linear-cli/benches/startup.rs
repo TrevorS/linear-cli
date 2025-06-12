@@ -1,7 +1,7 @@
 // ABOUTME: Benchmark for CLI startup time to measure performance optimizations
 // ABOUTME: Measures cold start time, help command performance, and CLI initialization
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use std::process::Command;
 use std::time::Duration;
 

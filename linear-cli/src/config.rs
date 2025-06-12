@@ -1,7 +1,7 @@
 // ABOUTME: Configuration file loading, validation, and hierarchical merging for Linear CLI
 // ABOUTME: Supports TOML config files with XDG Base Directory specification compliance
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

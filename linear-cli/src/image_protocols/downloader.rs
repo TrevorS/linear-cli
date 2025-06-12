@@ -2,7 +2,7 @@
 // ABOUTME: Implements timeouts, size limits, and content validation
 
 use crate::image_protocols::{ImageUrlValidator, TerminalCapabilities};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use log;
 use reqwest::Client;
@@ -355,12 +355,10 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("does not serve image content")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("does not serve image content"));
 
         unsafe {
             std::env::remove_var("LINEAR_CLI_ALLOWED_IMAGE_DOMAINS");

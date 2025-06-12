@@ -307,10 +307,8 @@ mod tests {
     fn test_nonexistent_template() {
         let manager = TemplateManager::new();
         assert!(manager.get_template("nonexistent").is_none());
-        assert!(
-            manager
-                .apply_template("nonexistent", "title", "desc")
-                .is_none()
-        );
+        assert!(manager
+            .apply_template("nonexistent", "title", "desc")
+            .is_none());
     }
 }

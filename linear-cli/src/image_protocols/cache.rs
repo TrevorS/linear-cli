@@ -1,7 +1,7 @@
 // ABOUTME: File-based caching system for downloaded images
 // ABOUTME: Implements URL-based hashing and cache size management
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log;
 use sha2::{Digest, Sha256};
 use std::fs;
