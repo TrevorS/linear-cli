@@ -2273,7 +2273,7 @@ async fn run_async_commands(
             pretty,
             include_archived,
         } => {
-            use crate::search::{SearchOptions, search};
+            use crate::search::{search, SearchOptions};
 
             let spinner = create_spinner("Searching...", is_interactive);
 

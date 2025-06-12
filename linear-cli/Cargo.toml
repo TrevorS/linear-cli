@@ -1,7 +1,14 @@
 [package]
 name = "linear-cli"
-version = "0.1.0"
-edition = "2024"
+description = "Fast command-line interface for Linear issue tracking"
+keywords = ["linear", "cli", "issue-tracking", "productivity", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
 
 [dependencies]
 anyhow = "1.0.98"

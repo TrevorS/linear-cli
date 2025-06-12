@@ -1,7 +1,7 @@
 // ABOUTME: URL validation and image detection for safe image processing
 // ABOUTME: Implements security checks and content-type validation
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use url::Url;
 
@@ -195,10 +195,8 @@ mod tests {
         let validator = ImageUrlValidator::new();
 
         assert!(validator.is_linear_upload_url("https://uploads.linear.app/abc123/image"));
-        assert!(
-            validator
-                .is_linear_upload_url("https://linear-uploads.s3.amazonaws.com/def456/image.png")
-        );
+        assert!(validator
+            .is_linear_upload_url("https://linear-uploads.s3.amazonaws.com/def456/image.png"));
         assert!(!validator.is_linear_upload_url("https://evil.com/uploads.linear.app/fake"));
     }
 
@@ -207,33 +205,25 @@ mod tests {
         let validator = ImageUrlValidator::new();
 
         // Valid Linear URLs should pass
-        assert!(
-            validator
-                .validate_image_url("https://uploads.linear.app/image.png")
-                .is_ok()
-        );
+        assert!(validator
+            .validate_image_url("https://uploads.linear.app/image.png")
+            .is_ok());
 
         // Invalid schemes should fail
-        assert!(
-            validator
-                .validate_image_url("ftp://uploads.linear.app/image.png")
-                .is_err()
-        );
+        assert!(validator
+            .validate_image_url("ftp://uploads.linear.app/image.png")
+            .is_err());
         assert!(validator.validate_image_url("file:///etc/passwd").is_err());
 
         // Directory traversal should fail
-        assert!(
-            validator
-                .validate_image_url("https://uploads.linear.app/../../../etc/passwd")
-                .is_err()
-        );
+        assert!(validator
+            .validate_image_url("https://uploads.linear.app/../../../etc/passwd")
+            .is_err());
 
         // Unauthorized domains should fail
-        assert!(
-            validator
-                .validate_image_url("https://evil.com/image.png")
-                .is_err()
-        );
+        assert!(validator
+            .validate_image_url("https://evil.com/image.png")
+            .is_err());
     }
 
     #[test]
@@ -246,21 +236,15 @@ mod tests {
 
         let validator = ImageUrlValidator::new();
 
-        assert!(
-            validator
-                .validate_image_url("https://example.com/image.png")
-                .is_ok()
-        );
-        assert!(
-            validator
-                .validate_image_url("https://test.org/image.png")
-                .is_ok()
-        );
-        assert!(
-            validator
-                .validate_image_url("https://unauthorized.com/image.png")
-                .is_err()
-        );
+        assert!(validator
+            .validate_image_url("https://example.com/image.png")
+            .is_ok());
+        assert!(validator
+            .validate_image_url("https://test.org/image.png")
+            .is_ok());
+        assert!(validator
+            .validate_image_url("https://unauthorized.com/image.png")
+            .is_err());
 
         unsafe {
             std::env::remove_var("LINEAR_CLI_ALLOWED_IMAGE_DOMAINS");

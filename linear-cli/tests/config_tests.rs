@@ -248,11 +248,9 @@ fn test_config_xdg_paths() {
     assert!(paths.iter().any(|p| p.ends_with("linear-cli.toml")));
 
     // Should include XDG config home
-    assert!(
-        paths
-            .iter()
-            .any(|p| p.contains("linear-cli") && p.ends_with("config.toml"))
-    );
+    assert!(paths
+        .iter()
+        .any(|p| p.contains("linear-cli") && p.ends_with("config.toml")));
 }
 
 #[test]

@@ -1,62 +1,133 @@
-# linear-cli
+# Linear CLI
 
-Fast command-line interface for Linear issue tracking.
+> Fast, scriptable Linear issue management from your terminal
+
+A command-line interface for [Linear](https://linear.app) that lets you manage issues, projects, and teams without leaving your terminal. Built in Rust for speed and reliability.
+
+## Quick Start
+
+```bash
+# Install
+cargo install linear-cli
+
+# Authenticate
+linear login
+
+# Start using
+linear issues --assignee me
+```
 
 ## Installation
+
+### Cargo
 
 ```bash
 cargo install linear-cli
 ```
 
+### GitHub Releases
+
+Download pre-built binaries from [releases](https://github.com/TrevorS/linear-cli/releases):
+
+- **Linux**: `linear-cli-x86_64-unknown-linux-musl.tar.gz`
+- **macOS**: `linear-cli-x86_64-apple-darwin.tar.gz` (Intel) / `linear-cli-aarch64-apple-darwin.tar.gz` (Apple Silicon)
+- **Windows**: `linear-cli-x86_64-pc-windows-msvc.zip`
+
+### From Source
+
+```bash
+git clone https://github.com/TrevorS/linear-cli.git
+cd linear-cli
+make install
+```
+
 ## Authentication
 
-**Option 1: API Key (Simple)**
+### OAuth (Recommended)
 
-Get a Linear API key at https://linear.app/settings/api and set:
+```bash
+linear login   # Interactive browser-based authentication
+linear logout  # Clear stored credentials
+```
+
+### API Key
+
+Get a Linear API key at https://linear.app/settings/api:
 
 ```bash
 export LINEAR_API_KEY=lin_api_xxxxx
 ```
 
-**Option 2: OAuth (Interactive)**
-
+For development, add to `.env`:
 ```bash
-linear login  # Interactive OAuth flow
-linear logout
+LINEAR_API_KEY=lin_api_xxxxx
 ```
 
-## Commands
+## Features
+
+- **Issue Management**: List, view, create, update, close, and reopen issues
+- **Rich Terminal Output**: Color-coded tables with syntax-highlighted markdown
+- **Flexible Input**: CLI arguments, interactive prompts, or markdown files with frontmatter
+- **Smart Terminal Detection**: Automatic color/formatting based on TTY capabilities
+- **Multiple Output Formats**: Formatted tables, JSON, or YAML
+- **Configuration System**: TOML configs with aliases and XDG compliance
+- **Shell Integration**: Completions for bash, zsh, fish, and PowerShell
+- **Cross-Platform**: Linux, macOS, and Windows support
+
+## Usage
 
 ### List Issues
+
 ```bash
-linear issues                    # Show recent issues
-linear issues --limit 50        # Show more issues
-linear issues --assignee me     # Your assigned issues
-linear issues --status "done"   # Filter by status
-linear issues --team ENG        # Filter by team
-linear issues --json            # JSON output
+# Recent issues
+linear issues
+
+# Filter by assignee
+linear issues --assignee me
+linear issues --assignee alice
+linear issues --assignee unassigned
+
+# Filter by status
+linear issues --status "In Progress"
+linear issues --status done
+
+# Filter by team
+linear issues --team ENG
+
+# Combine filters
+linear issues --assignee me --status todo --team ENG
+
+# JSON output for scripting
+linear issues --json | jq '.[] | select(.priority == 1)'
 ```
 
 ### View Issue Details
+
 ```bash
-linear issue ENG-123             # Full issue details with description
-linear issue ENG-123 --json     # JSON output
-linear issue ENG-123 --raw      # Plain markdown (no styling)
+linear issue ENG-123              # Full details with description
+linear issue ENG-123 --json       # JSON output
+linear issue ENG-123 --raw        # Plain markdown
 ```
 
 ### Create Issues
+
 ```bash
 # Interactive mode
 linear create
 
-# Direct command line
-linear create --title "Fix login bug" --team ENG --assignee me --priority 2
+# Command line
+linear create \
+  --title "Fix authentication timeout" \
+  --team ENG \
+  --assignee me \
+  --priority 1 \
+  --labels bug,auth
 
-# From markdown file with frontmatter
+# From markdown file
 linear create --from-file issue.md
 
 # Dry run (preview without creating)
-linear create --title "Test" --team ENG --dry-run
+linear create --title "Test issue" --team ENG --dry-run
 ```
 
 #### Creating from Markdown Files
@@ -72,57 +143,192 @@ labels: [bug, auth, urgent]
 ---
 
 # Problem
-Users experiencing login failures when multiple tabs open.
+
+Users experiencing login failures when multiple tabs are open.
 
 ## Steps to Reproduce
+
 1. Open multiple browser tabs
 2. Login from each tab simultaneously
-3. Some requests fail
+3. Some requests fail with timeout errors
+
+## Expected Behavior
+
+All login attempts should succeed or fail gracefully.
 ```
 
-Then run:
+Then:
 ```bash
 linear create --from-file issue.md
 ```
 
-### Other Commands
+### Manage Issues
+
 ```bash
-linear status                    # Check connection
-linear --help                    # Full help
+# Update issue status
+linear update ENG-123 --status "In Progress"
+
+# Close issue
+linear close ENG-123
+
+# Reopen issue
+linear reopen ENG-123
+
+# Add comment
+linear comment ENG-123 "Fixed in PR #456"
 ```
 
-## Features
+### Browse Projects and Teams
 
-- **Issue Management**: List, view, create, and filter issues
-- **Rich Formatting**: Color-coded tables, markdown rendering with syntax highlighting
-- **Flexible Input**: Interactive prompts, CLI args, or markdown files with frontmatter
-- **Smart Terminal Detection**: Automatic color/formatting based on TTY
-- **Authentication**: OAuth with keychain storage or API key
-- **Output Formats**: Formatted tables or JSON
-- **Image Support**: Inline images in compatible terminals (Kitty, iTerm2, WezTerm)
+```bash
+# List projects
+linear projects
+
+# List teams
+linear teams
+
+# View comments on an issue
+linear comments ENG-123
+
+# Search across issues
+linear search "authentication bug"
+```
+
+### Your Work
+
+```bash
+# See your assigned and created issues
+linear my-work
+
+# Morning standup helper
+linear issues --assignee me --status "In Progress"
+```
+
+## Example Output
+
+```
+┌─────────┬───────────────────────────────────┬──────────┬─────────────┬──────────┐
+│ ID      │ Title                             │ Assignee │ Status      │ Priority │
+├─────────┼───────────────────────────────────┼──────────┼─────────────┼──────────┤
+│ ENG-123 │ Fix authentication timeout        │ alice    │ Todo        │ High     │
+│ ENG-124 │ Add user preferences UI           │ bob      │ In Progress │ Medium   │
+│ ENG-125 │ Optimize database queries         │ carol    │ In Review   │ Low      │
+│ ENG-126 │ Update API documentation          │ dave     │ Done        │ Medium   │
+└─────────┴───────────────────────────────────┴──────────┴─────────────┴──────────┘
+```
+
+## Configuration
+
+Linear CLI supports TOML configuration files:
+
+### Config Locations
+
+1. `./linear-cli.toml` (project-specific)
+2. `$XDG_CONFIG_HOME/linear-cli/config.toml` (user config)
+3. `~/.config/linear-cli/config.toml` (fallback)
+
+### Example Configuration
+
+```toml
+# Default values
+default_team = "ENG"
+default_assignee = "me"
+preferred_format = "table"
+
+# Command aliases
+[aliases]
+my = ["issues", "--assignee", "me"]
+todo = ["issues", "--status", "todo", "--assignee", "me"]
+standup = ["issues", "--team", "ENG", "--updated-after", "yesterday"]
+```
+
+### Using Aliases
+
+```bash
+linear my          # Expands to: linear issues --assignee me
+linear todo        # Expands to: linear issues --status todo --assignee me
+linear standup     # Show team's recent activity
+```
+
+## Shell Completions
+
+Generate and install completions for your shell:
+
+```bash
+# Generate completions
+linear completions bash > ~/.local/share/bash-completion/completions/linear
+linear completions zsh > ~/.zfunc/_linear
+linear completions fish > ~/.config/fish/completions/linear.fish
+linear completions powershell > linear_completions.ps1
+```
+
+Restart your shell or source the completion file.
+
+## Scripting and Integration
+
+### JSON Output
+
+All commands support `--json` for machine-readable output:
+
+```bash
+# Get high-priority issues
+linear issues --json | jq '.[] | select(.priority == 1) | .title'
+
+# Count issues by status
+linear issues --json | jq 'group_by(.status) | map({status: .[0].status, count: length})'
+
+# Export team's work
+linear issues --team ENG --json > team-issues.json
+```
+
+### Exit Codes
+
+- `0`: Success
+- `1`: General error
+- `2`: Authentication error
+- `3`: Network error
+- `4`: Not found error
 
 ## Development
 
+The project uses a Make-based workflow:
+
 ```bash
-# Setup and quick checks
-make dev-setup    # Initial setup
+# Setup development environment
+make dev-setup
+
+# Quick development check
 make dev          # Format, lint, test
-make run          # Run CLI with sample data
 
-# Build and test
-make build        # Debug build
-make test         # Run tests
-make release      # Release build
+# Run with sample data
+make run
 
-# See all commands
+# See all available commands
 make help
 ```
 
-Project structure:
-- `linear-cli/` - Main CLI binary
-- `linear-sdk/` - Linear API client library
-- `xtask/` - Build tools
+### Project Structure
+
+```
+linear-cli/
+├── linear-cli/    # Main CLI binary
+├── linear-sdk/    # Reusable Linear API client
+└── xtask/         # Build automation tools
+```
+
+See [CLAUDE.md](./CLAUDE.md) for detailed development documentation.
+
+## Performance
+
+- **Fast startup**: < 50ms typical cold start
+- **Efficient API usage**: Batched requests and intelligent caching
+- **Small binaries**: < 10MB statically linked
+- **Low memory usage**: Rust's zero-cost abstractions
 
 ## License
 
 MIT
+
+---
+
+*Linear CLI is an unofficial tool. Linear® is a trademark of Linear Orbit, Inc.*

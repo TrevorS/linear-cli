@@ -2,7 +2,7 @@
 // ABOUTME: Expands user-defined command aliases before CLI argument parsing
 
 use crate::config::ConfigAliases;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 
 const MAX_EXPANSION_DEPTH: usize = 10;

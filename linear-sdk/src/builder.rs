@@ -1,8 +1,8 @@
 // ABOUTME: Builder pattern implementation for LinearClient configuration
 // ABOUTME: Provides type-safe configuration with compile-time validation
 
-use crate::LinearClient;
 use crate::error::LinearError;
+use crate::LinearClient;
 use secrecy::SecretString;
 use std::marker::PhantomData;
 use std::time::Duration;
@@ -158,8 +158,8 @@ impl TypedLinearClientBuilder<WithAuth> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LinearClient;
     use crate::error::LinearError;
+    use crate::LinearClient;
     use secrecy::SecretString;
     use std::time::Duration;
 

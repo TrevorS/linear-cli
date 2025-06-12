@@ -3,7 +3,7 @@
 
 use super::ImageProtocol;
 use anyhow::Result;
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub struct ITerm2Protocol;
 

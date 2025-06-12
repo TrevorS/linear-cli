@@ -1,7 +1,7 @@
 // ABOUTME: Shell completion generation using clap_complete for all supported shells
 // ABOUTME: Provides static completions for bash, zsh, fish, and powershell
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use clap::{Command, ValueEnum};
 use clap_complete::{generate, shells};
 use std::fmt;

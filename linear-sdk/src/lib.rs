@@ -2,7 +2,7 @@
 // ABOUTME: Includes authentication, queries, mutations, and generated types
 
 use graphql_client::{GraphQLQuery, Response};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use std::borrow::Cow;
 use std::fmt::Debug;
 
@@ -2321,12 +2321,10 @@ mod tests {
         assert_eq!(issue.priority_label, Some("High".to_string()));
 
         assert!(issue.description.is_some());
-        assert!(
-            issue
-                .description
-                .unwrap()
-                .contains("race conditions when logging in")
-        );
+        assert!(issue
+            .description
+            .unwrap()
+            .contains("race conditions when logging in"));
 
         assert_eq!(issue.url, "https://linear.app/test/issue/ENG-123");
     }
@@ -3123,16 +3121,12 @@ mod tests {
         mock.assert();
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Status 'Unknown Status' not found")
-        );
-        assert!(
-            error
-                .to_string()
-                .contains("Available states: Todo, In Progress, In Review, Done")
-        );
+        assert!(error
+            .to_string()
+            .contains("Status 'Unknown Status' not found"));
+        assert!(error
+            .to_string()
+            .contains("Available states: Todo, In Progress, In Review, Done"));
     }
 
     #[tokio::test]

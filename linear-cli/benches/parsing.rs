@@ -1,7 +1,7 @@
 // ABOUTME: Benchmark for parsing operations including config files and API responses
 // ABOUTME: Tests TOML config parsing, JSON response parsing, and argument parsing
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use linear_cli::config::Config;
 
 const SAMPLE_CONFIG_TOML: &str = r#"

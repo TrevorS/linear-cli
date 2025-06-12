@@ -2,13 +2,13 @@
 // ABOUTME: Provides high-level async interface for image processing workflow
 
 use crate::image_protocols::{
-    ImageCache, ImageDownloader, ImageProtocol, ImageUrlValidator, TerminalCapabilities,
     conversion::{ConversionConfig, ImageConverter},
     iterm2::ITerm2Protocol,
     kitty::KittyProtocol,
     scaling::{ImageScaler, ScalingConfig},
+    ImageCache, ImageDownloader, ImageProtocol, ImageUrlValidator, TerminalCapabilities,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log;
 
 pub struct ImageManager {

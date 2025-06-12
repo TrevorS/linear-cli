@@ -1,7 +1,7 @@
 // ABOUTME: Frontmatter parsing for markdown files used in issue creation
 // ABOUTME: Handles YAML frontmatter extraction and validation for Linear CLI
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -236,12 +236,10 @@ team: ENG
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No frontmatter found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No frontmatter found"));
     }
 
     #[test]
@@ -255,12 +253,10 @@ team: ENG
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("closing delimiter")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("closing delimiter"));
     }
 
     #[test]
@@ -276,12 +272,10 @@ Content here.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse frontmatter YAML")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to parse frontmatter YAML"));
     }
 
     #[test]
@@ -296,12 +290,10 @@ Content without title.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("missing field `title`")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing field `title`"));
     }
 
     #[test]
@@ -316,12 +308,10 @@ Content with empty title.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Title is required")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Title is required"));
     }
 
     #[test]
@@ -336,12 +326,10 @@ Content with whitespace-only title.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Title is required")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Title is required"));
     }
 
     #[test]
@@ -357,12 +345,10 @@ Priority should be 1-4.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Priority must be between 1 and 4")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Priority must be between 1 and 4"));
     }
 
     #[test]
@@ -378,12 +364,10 @@ Negative priority should be invalid.
 
         let result = parse_markdown_content(content);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Priority must be between 1 and 4")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Priority must be between 1 and 4"));
     }
 
     #[test]
@@ -438,12 +422,10 @@ This issue was loaded from a file.
     fn test_error_file_not_found() {
         let result = parse_markdown_file("/nonexistent/file.md");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to read file")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read file"));
     }
 
     #[test]
