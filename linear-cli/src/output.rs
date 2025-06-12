@@ -22,12 +22,22 @@ use crate::image_protocols::{ImageManager, ImageRenderResult};
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 
+#[cfg(feature = "inline-images")]
+static IMAGE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+
 fn get_syntax_set() -> &'static SyntaxSet {
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
 fn get_theme_set() -> &'static ThemeSet {
     THEME_SET.get_or_init(ThemeSet::load_defaults)
+}
+
+#[cfg(feature = "inline-images")]
+fn get_image_regex() -> &'static regex::Regex {
+    IMAGE_REGEX.get_or_init(|| {
+        regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("Valid regex pattern")
+    })
 }
 
 pub trait OutputFormat {
@@ -543,16 +553,14 @@ impl TableFormatter {
         markdown: &str,
         image_manager: &ImageManager,
     ) -> Result<String> {
-        use regex::Regex;
-
         log::debug!("Processing markdown for images...");
 
         // Find and replace image patterns in the raw markdown
         let mut result = markdown.to_string();
         let mut image_count = 0;
 
-        // Use regex to find image patterns
-        let image_regex = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
+        // Use lazy-loaded regex to find image patterns
+        let image_regex = get_image_regex();
         let mut images_to_process = Vec::new();
 
         for captures in image_regex.captures_iter(markdown) {
