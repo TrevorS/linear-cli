@@ -11,6 +11,6 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.39", features = ["derive"] }
-reqwest = { version = "0.12.19", features = ["blocking", "json"] }
+clap = { version = "4.5.40", features = ["derive"] }
+reqwest = { version = "0.12.20", features = ["blocking", "json"] }
 serde_json = "1.0.140"
