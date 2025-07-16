@@ -176,8 +176,7 @@ where
         match format.as_str() {
             "table" | "json" | "yaml" => Ok(value),
             _ => Err(D::Error::custom(format!(
-                "Invalid format '{}'. Must be one of: table, json, yaml",
-                format
+                "Invalid format '{format}'. Must be one of: table, json, yaml"
             ))),
         }
     } else {
@@ -209,14 +208,12 @@ where
                 Ok(value)
             } else {
                 Err(D::Error::custom(format!(
-                    "Invalid duration format '{}'. Expected format like '30m', '1h', '2d'",
-                    duration
+                    "Invalid duration format '{duration}'. Expected format like '30m', '1h', '2d'"
                 )))
             }
         } else {
             Err(D::Error::custom(format!(
-                "Invalid duration format '{}'. Must end with s, m, h, or d",
-                duration
+                "Invalid duration format '{duration}'. Must end with s, m, h, or d"
             )))
         }
     } else {

@@ -50,10 +50,10 @@ impl LinearClient {
 impl LinearClient {
     pub fn create_proxy(url: &str) -> Result<reqwest::Proxy, LinearError> {
         let parsed_url = Url::parse(url)
-            .map_err(|e| LinearError::Configuration(format!("Invalid proxy URL: {}", e)))?;
+            .map_err(|e| LinearError::Configuration(format!("Invalid proxy URL: {e}")))?;
 
         reqwest::Proxy::all(parsed_url.as_str())
-            .map_err(|e| LinearError::Configuration(format!("Invalid proxy configuration: {}", e)))
+            .map_err(|e| LinearError::Configuration(format!("Invalid proxy configuration: {e}")))
     }
 }
 
@@ -119,11 +119,10 @@ impl<State> TypedLinearClientBuilder<State> {
 
     pub fn proxy(mut self, url: &str) -> Result<Self, LinearError> {
         let parsed_url = Url::parse(url)
-            .map_err(|e| LinearError::Configuration(format!("Invalid proxy URL: {}", e)))?;
+            .map_err(|e| LinearError::Configuration(format!("Invalid proxy URL: {e}")))?;
 
-        let proxy = reqwest::Proxy::all(parsed_url.as_str()).map_err(|e| {
-            LinearError::Configuration(format!("Invalid proxy configuration: {}", e))
-        })?;
+        let proxy = reqwest::Proxy::all(parsed_url.as_str())
+            .map_err(|e| LinearError::Configuration(format!("Invalid proxy configuration: {e}")))?;
 
         self.proxy = Some(proxy);
         Ok(self)
@@ -209,7 +208,7 @@ mod tests {
         // SecretString should protect the value in the config struct itself
         // We can't easily test the debug output of LinearClientConfig since it's private
         // But we can verify the SecretString itself protects the value
-        let debug_str = format!("{:?}", api_key);
+        let debug_str = format!("{api_key:?}");
         assert!(!debug_str.contains("test-api-key"));
     }
 

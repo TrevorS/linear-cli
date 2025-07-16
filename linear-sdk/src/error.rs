@@ -40,12 +40,12 @@ pub enum LinearError {
 impl fmt::Display for LinearError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LinearError::Auth { reason, .. } => write!(f, "Authentication failed: {}", reason),
+            LinearError::Auth { reason, .. } => write!(f, "Authentication failed: {reason}"),
             LinearError::IssueNotFound { identifier, .. } => {
-                write!(f, "Issue {} not found", identifier)
+                write!(f, "Issue {identifier} not found")
             }
-            LinearError::Network { message, .. } => write!(f, "Network error: {}", message),
-            LinearError::GraphQL { message, .. } => write!(f, "GraphQL error: {}", message),
+            LinearError::Network { message, .. } => write!(f, "Network error: {message}"),
+            LinearError::GraphQL { message, .. } => write!(f, "GraphQL error: {message}"),
             LinearError::RateLimit { .. } => write!(
                 f,
                 "Rate limit exceeded. Please wait before making more requests"
@@ -53,8 +53,8 @@ impl fmt::Display for LinearError {
             LinearError::InvalidResponse => write!(f, "Invalid API response format"),
             LinearError::Timeout => write!(f, "Timeout: Request took too long to complete"),
             LinearError::OAuthConfig => write!(f, "OAuth configuration error"),
-            LinearError::Configuration(msg) => write!(f, "Configuration error: {}", msg),
-            LinearError::InvalidInput { message } => write!(f, "Invalid input: {}", message),
+            LinearError::Configuration(msg) => write!(f, "Configuration error: {msg}"),
+            LinearError::InvalidInput { message } => write!(f, "Invalid input: {message}"),
         }
     }
 }
@@ -94,7 +94,7 @@ pub trait ErrorContextExt<T> {
 impl<T> ErrorContextExt<T> for Result<T, LinearError> {
     fn context(self, msg: &str) -> Result<T, LinearError> {
         self.map_err(|e| LinearError::Network {
-            message: format!("{}: {}", msg, e),
+            message: format!("{msg}: {e}"),
             retryable: e.is_retryable(),
             source: Box::new(e),
         })
@@ -109,7 +109,7 @@ pub fn format_error_with_suggestion(err: &LinearError) -> String {
         ..
     } = err
     {
-        output.push_str(&format!("\n{}", sugg));
+        output.push_str(&format!("\n{sugg}"));
     }
 
     output
@@ -156,7 +156,7 @@ impl LinearError {
             408 => LinearError::Timeout,
             429 => LinearError::RateLimit { reset_seconds: 0 },
             errors::SERVER_ERROR_MIN..=errors::SERVER_ERROR_MAX => LinearError::Network {
-                message: format!("Server error: {}", status),
+                message: format!("Server error: {status}"),
                 retryable: true,
                 source: Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -164,7 +164,7 @@ impl LinearError {
                 )),
             },
             _ => LinearError::Network {
-                message: format!("HTTP error: {}", status),
+                message: format!("HTTP error: {status}"),
                 retryable: false,
                 source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "HTTP error")),
             },
@@ -266,7 +266,7 @@ mod tests {
         assert!(!err.is_retryable());
 
         // Test suggestion rendering
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("ENG-123"));
     }
 
@@ -331,7 +331,7 @@ mod tests {
         assert!(with_context.is_err());
 
         let err = with_context.unwrap_err();
-        assert!(format!("{:?}", err).contains("While fetching issues"));
+        assert!(format!("{err:?}").contains("While fetching issues"));
     }
 
     #[test]

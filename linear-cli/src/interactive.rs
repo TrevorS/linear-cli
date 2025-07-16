@@ -111,7 +111,7 @@ impl<'a> InteractivePrompter<'a> {
         let is_tty = std::io::stdin().is_terminal();
         let preferences_manager =
             PreferencesManager::new().map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to initialize preferences: {}", e),
+                message: format!("Failed to initialize preferences: {e}"),
             })?;
         let template_manager = TemplateManager::new();
         let cache = PerformanceCache::new();
@@ -165,7 +165,7 @@ impl<'a> InteractivePrompter<'a> {
     /// Search users with caching for improved performance
     async fn search_users_cached(&self, query: &str, limit: i32) -> SdkResult<Vec<User>> {
         // Try cache first
-        let cache_key = format!("{}:{}", query, limit);
+        let cache_key = format!("{query}:{limit}");
         if let Some(users) = self.cache.get_users(&cache_key) {
             log::debug!(
                 "Using cached user search results for '{}' ({} users)",
@@ -176,7 +176,7 @@ impl<'a> InteractivePrompter<'a> {
         }
 
         // Cache miss, fetch from API
-        log::debug!("Cache miss, searching users via API for query: '{}'", query);
+        log::debug!("Cache miss, searching users via API for query: '{query}'");
         let users = self.client.search_users(query, limit).await?;
         self.cache.set_users(&cache_key, users.clone());
         log::debug!(
@@ -218,10 +218,10 @@ impl<'a> InteractivePrompter<'a> {
 
         // Show context if available
         if let Some(branch) = &context_defaults.branch_context {
-            println!("📋 Detected Git branch: {}", branch);
+            println!("📋 Detected Git branch: {branch}");
         }
         if let Some(prefix) = &context_defaults.suggested_title_prefix {
-            println!("💡 Suggested title prefix: {}", prefix);
+            println!("💡 Suggested title prefix: {prefix}");
         }
         println!();
 
@@ -298,7 +298,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(false)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read template choice: {}", e),
+                message: format!("Failed to read template choice: {e}"),
             })?;
 
         if !use_template {
@@ -315,7 +315,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select template: {}", e),
+                message: format!("Failed to select template: {e}"),
             })?;
 
         if selection == 0 {
@@ -351,7 +351,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read title: {}", e),
+                message: format!("Failed to read title: {e}"),
             })?;
 
         Ok(title.trim().to_string())
@@ -397,7 +397,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(default_selection)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team: {}", e),
+                message: format!("Failed to select team: {e}"),
             })?;
 
         Ok(teams[selection].id.clone())
@@ -414,7 +414,7 @@ impl<'a> InteractivePrompter<'a> {
                 .default(true)
                 .interact()
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to read template description choice: {}", e),
+                    message: format!("Failed to read template description choice: {e}"),
                 })?;
 
             if use_template_desc {
@@ -422,7 +422,7 @@ impl<'a> InteractivePrompter<'a> {
                     Editor::new()
                         .edit(&template_desc)
                         .map_err(|e| LinearError::InvalidInput {
-                            message: format!("Failed to open editor: {}", e),
+                            message: format!("Failed to open editor: {e}"),
                         })?;
 
                 return Ok(description.and_then(|d| {
@@ -468,7 +468,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(1) // Default to unassigned or suggested
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select assignee: {}", e),
+                message: format!("Failed to select assignee: {e}"),
             })?;
 
         match selection {
@@ -521,7 +521,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(default_selection)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select priority: {}", e),
+                message: format!("Failed to select priority: {e}"),
             })?;
 
         Ok(match selection {
@@ -550,7 +550,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read title: {}", e),
+                message: format!("Failed to read title: {e}"),
             })?;
 
         Ok(title.trim().to_string())
@@ -563,14 +563,14 @@ impl<'a> InteractivePrompter<'a> {
             .default(false)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read description choice: {}", e),
+                message: format!("Failed to read description choice: {e}"),
             })?;
 
         if use_editor {
             let description = Editor::new()
                 .edit("Enter your issue description here...")
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to open editor: {}", e),
+                    message: format!("Failed to open editor: {e}"),
                 })?;
 
             Ok(description.and_then(|d| {
@@ -587,7 +587,7 @@ impl<'a> InteractivePrompter<'a> {
                 .allow_empty(true)
                 .interact_text()
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to read description: {}", e),
+                    message: format!("Failed to read description: {e}"),
                 })?;
 
             let trimmed = description.trim();
@@ -620,7 +620,7 @@ impl<'a> InteractivePrompter<'a> {
             .items(&team_names)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team: {}", e),
+                message: format!("Failed to select team: {e}"),
             })?;
 
         Ok(teams[selection].id.clone())
@@ -656,7 +656,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(1) // Default to unassigned
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select assignee: {}", e),
+                message: format!("Failed to select assignee: {e}"),
             })?;
 
         match selection {
@@ -708,7 +708,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read search query: {}", e),
+                message: format!("Failed to read search query: {e}"),
             })?;
 
         let search_query = search_query.trim();
@@ -718,14 +718,11 @@ impl<'a> InteractivePrompter<'a> {
             .search_users_cached(search_query, 10)
             .await
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to search users: {}", e),
+                message: format!("Failed to search users: {e}"),
             })?;
 
         if users.is_empty() {
-            println!(
-                "No users found matching '{}'. Try a different search term.",
-                search_query
-            );
+            println!("No users found matching '{search_query}'. Try a different search term.");
             return Ok(None);
         }
 
@@ -750,7 +747,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select user: {}", e),
+                message: format!("Failed to select user: {e}"),
             })?;
 
         if selection == 0 {
@@ -776,7 +773,7 @@ impl<'a> InteractivePrompter<'a> {
                 .iter()
                 .find(|t| t.id == team_id)
                 .ok_or_else(|| LinearError::InvalidInput {
-                    message: format!("Team with ID '{}' not found", team_id),
+                    message: format!("Team with ID '{team_id}' not found"),
                 })?;
 
         if team.members.is_empty() {
@@ -801,7 +798,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team member: {}", e),
+                message: format!("Failed to select team member: {e}"),
             })?;
 
         if selection == 0 {
@@ -831,7 +828,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read user ID: {}", e),
+                message: format!("Failed to read user ID: {e}"),
             })?;
 
         Ok(Some(user_id.trim().to_string()))
@@ -848,7 +845,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0) // Default to None
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select priority: {}", e),
+                message: format!("Failed to select priority: {e}"),
             })?;
 
         Ok(match selection {
@@ -884,21 +881,18 @@ impl<'a> InteractivePrompter<'a> {
 
                         Err(LinearError::InvalidInput {
                             message: format!(
-                                "Team '{}' not found. {} Use 'linear teams' to see all available teams.",
-                                team, suggestion_text
+                                "Team '{team}' not found. {suggestion_text} Use 'linear teams' to see all available teams."
                             ),
                         })
                     }
                     Ok(_) => Err(LinearError::InvalidInput {
                         message: format!(
-                            "Team '{}' not found. Use 'linear teams' to see all available teams.",
-                            team
+                            "Team '{team}' not found. Use 'linear teams' to see all available teams."
                         ),
                     }),
                     Err(_) => Err(LinearError::InvalidInput {
                         message: format!(
-                            "Team '{}' not found and unable to fetch team suggestions.",
-                            team
+                            "Team '{team}' not found and unable to fetch team suggestions."
                         ),
                     }),
                 }
@@ -968,8 +962,7 @@ impl<'a> InteractivePrompter<'a> {
         if users.is_empty() {
             return Err(LinearError::InvalidInput {
                 message: format!(
-                    "User '{}' not found. Use 'linear users' to see available users.",
-                    assignee
+                    "User '{assignee}' not found. Use 'linear users' to see available users."
                 ),
             });
         }
@@ -1047,8 +1040,7 @@ impl<'a> InteractivePrompter<'a> {
         if suggestions.is_empty() {
             return Err(LinearError::InvalidInput {
                 message: format!(
-                    "Project '{}' not found. Use 'linear projects' to see all available projects.",
-                    project
+                    "Project '{project}' not found. Use 'linear projects' to see all available projects."
                 ),
             });
         }

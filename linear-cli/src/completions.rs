@@ -33,7 +33,7 @@ impl fmt::Display for Shell {
             Shell::Fish => "fish",
             Shell::PowerShell => "powershell",
         };
-        write!(f, "{}", shell_str)
+        write!(f, "{shell_str}")
     }
 }
 

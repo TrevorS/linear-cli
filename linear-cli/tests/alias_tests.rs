@@ -140,7 +140,7 @@ fn test_alias_max_depth_limit() {
     let mut aliases = HashMap::new();
     // Create a long chain that doesn't recurse but exceeds reasonable depth
     for i in 0..20 {
-        aliases.insert(format!("alias{}", i), vec![format!("alias{}", i + 1)]);
+        aliases.insert(format!("alias{i}"), vec![format!("alias{}", i + 1)]);
     }
     aliases.insert("alias20".to_string(), vec!["issues".to_string()]);
 

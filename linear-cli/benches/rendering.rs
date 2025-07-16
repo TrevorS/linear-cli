@@ -17,14 +17,14 @@ fn create_mock_issues(count: usize) -> Vec<Issue> {
                 2 => "Done".to_string(),
                 _ => "Backlog".to_string(),
             },
-            state_id: format!("state-{}", i),
+            state_id: format!("state-{i}"),
             assignee: if i % 3 == 0 {
                 Some(format!("User {}", i + 1))
             } else {
                 None
             },
             assignee_id: if i % 3 == 0 {
-                Some(format!("user-{}", i))
+                Some(format!("user-{i}"))
             } else {
                 None
             },

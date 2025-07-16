@@ -44,7 +44,7 @@ fn process_graphql_dir(dir: &Path, out_dir: &str) {
             )
             .unwrap();
 
-            let output_path = format!("{}/{}.rs", out_dir, query_name);
+            let output_path = format!("{out_dir}/{query_name}.rs");
             fs::write(&output_path, tokens.to_string()).unwrap();
         }
     }

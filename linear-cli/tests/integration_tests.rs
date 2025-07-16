@@ -111,8 +111,7 @@ fn test_alias_recursion_prevention() {
     let error_msg = result.unwrap_err().to_string();
     assert!(
         error_msg.contains("recursive") || error_msg.contains("Recursive"),
-        "Error should mention recursion: {}",
-        error_msg
+        "Error should mention recursion: {error_msg}"
     );
 }
 
@@ -151,8 +150,7 @@ fn test_completions_integration() {
 
         assert!(
             !output_str.is_empty(),
-            "Output should not be empty for {}",
-            shell
+            "Output should not be empty for {shell}"
         );
 
         // Each shell should have its specific syntax

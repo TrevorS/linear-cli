@@ -41,7 +41,7 @@ impl fmt::Display for IssueStatus {
             IssueStatus::Done => write!(f, "{}", constants::status::DONE),
             IssueStatus::Backlog => write!(f, "{}", constants::status::BACKLOG),
             IssueStatus::Canceled => write!(f, "{}", constants::status::CANCELED),
-            IssueStatus::Unknown(s) => write!(f, "{}", s),
+            IssueStatus::Unknown(s) => write!(f, "{s}"),
         }
     }
 }

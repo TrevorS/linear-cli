@@ -587,7 +587,7 @@ impl LinearClient {
                 .split("::")
                 .last()
                 .unwrap_or("unknown");
-            log::debug!("Sending GraphQL query: {}", query_name);
+            log::debug!("Sending GraphQL query: {query_name}");
             log::debug!(
                 "Request body: {}",
                 serde_json::to_string_pretty(&request_body).unwrap_or_default()
@@ -604,7 +604,7 @@ impl LinearClient {
             async move {
                 let start_time = std::time::Instant::now();
                 let response = client
-                    .post(format!("{}/graphql", base_url))
+                    .post(format!("{base_url}/graphql"))
                     .json(request_body)
                     .send()
                     .await
@@ -627,7 +627,7 @@ impl LinearClient {
 
                 if let Some(errors) = response_body.errors {
                     return Err(LinearError::GraphQL {
-                        message: format!("{:?}", errors),
+                        message: format!("{errors:?}"),
                         errors: vec![],
                     });
                 }
@@ -1473,7 +1473,7 @@ impl LinearClient {
         }
 
         Err(LinearError::InvalidInput {
-            message: format!("Team with key '{}' not found", team_key),
+            message: format!("Team with key '{team_key}' not found"),
         })
     }
 
@@ -1927,7 +1927,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .unwrap();
         let result = client.execute_viewer_query().await;
@@ -2051,7 +2051,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .expect("Failed to create client");
         let result = client.list_issues(5).await;
@@ -2397,7 +2397,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .expect("Failed to create client");
 

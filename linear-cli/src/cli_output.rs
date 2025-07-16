@@ -28,7 +28,7 @@ impl CliOutput {
         if self.use_color {
             eprintln!("{} {}", "error:".red().bold(), message);
         } else {
-            eprintln!("error: {}", message);
+            eprintln!("error: {message}");
         }
     }
 
@@ -37,7 +37,7 @@ impl CliOutput {
         if self.use_color {
             eprintln!("{} {}", "warning:".yellow().bold(), message);
         } else {
-            eprintln!("warning: {}", message);
+            eprintln!("warning: {message}");
         }
     }
 
@@ -46,7 +46,7 @@ impl CliOutput {
         if self.use_color {
             eprintln!("{} {}", "info:".blue().bold(), message);
         } else {
-            eprintln!("info: {}", message);
+            eprintln!("info: {message}");
         }
     }
 
@@ -55,7 +55,7 @@ impl CliOutput {
         if self.use_color {
             eprintln!("{} {}", "success:".green().bold(), message);
         } else {
-            eprintln!("success: {}", message);
+            eprintln!("success: {message}");
         }
     }
 
@@ -64,13 +64,13 @@ impl CliOutput {
         if self.use_color {
             eprintln!("{} {}", icon.dimmed(), message);
         } else {
-            eprintln!("{} {}", icon, message);
+            eprintln!("{icon} {message}");
         }
     }
 
     /// Display a debug message (only when RUST_LOG enables debug logging)
     pub fn debug(&self, message: &str) {
-        log::debug!("{}", message);
+        log::debug!("{message}");
     }
 }
 

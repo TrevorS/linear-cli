@@ -279,7 +279,7 @@ impl TableFormatter {
                         } else {
                             current_text.clone()
                         };
-                        writeln!(output, "{}", heading_text)?;
+                        writeln!(output, "{heading_text}")?;
                         writeln!(output)?; // Add newline after heading
                         current_text.clear();
                         is_heading = false;
@@ -300,7 +300,7 @@ impl TableFormatter {
                         // Apply syntax highlighting to the collected code
                         match self.highlight_code(&current_text, &current_language) {
                             Ok(highlighted) => {
-                                write!(output, "{}", highlighted)?;
+                                write!(output, "{highlighted}")?;
                             }
                             Err(_) => {
                                 // Fallback to original behavior if highlighting fails
@@ -308,7 +308,7 @@ impl TableFormatter {
                                     if self.use_color {
                                         writeln!(output, "{}", line.on_black().white())?;
                                     } else {
-                                        writeln!(output, "{}", line)?;
+                                        writeln!(output, "{line}")?;
                                     }
                                 }
                             }
@@ -336,7 +336,7 @@ impl TableFormatter {
                     } else if in_emphasis && self.use_color {
                         write!(output, "{}", text.italic())?;
                     } else {
-                        write!(output, "{}", text)?;
+                        write!(output, "{text}")?;
                     }
                 }
                 Event::Code(code) => {
@@ -345,12 +345,12 @@ impl TableFormatter {
                         if self.use_color {
                             current_text.push_str(&code.on_black().white().to_string());
                         } else {
-                            current_text.push_str(&format!("`{}`", code));
+                            current_text.push_str(&format!("`{code}`"));
                         }
                     } else if self.use_color {
                         write!(output, "{}", code.on_black().white())?;
                     } else {
-                        write!(output, "`{}`", code)?;
+                        write!(output, "`{code}`")?;
                     }
                 }
                 Event::Start(Tag::Emphasis) => {
@@ -419,11 +419,7 @@ impl TableFormatter {
                                 )
                             )?;
                         } else {
-                            write!(
-                                output,
-                                "📎 Media: {}\n   🔗 {}",
-                                current_text, current_link_url
-                            )?;
+                            write!(output, "📎 Media: {current_text}\n   🔗 {current_link_url}")?;
                         }
                     } else {
                         // Regular link - show the link text as a clickable hyperlink
@@ -888,15 +884,15 @@ mod tests {
         assignee: Option<String>,
     ) -> Issue {
         Issue {
-            id: format!("id-{}", identifier),
+            id: format!("id-{identifier}"),
             identifier: identifier.to_string(),
             title: title.to_string(),
             status: status.to_string(),
-            state_id: format!("state-{}", identifier),
+            state_id: format!("state-{identifier}"),
             assignee: assignee.clone(),
-            assignee_id: assignee.map(|_| format!("user-{}", identifier)),
+            assignee_id: assignee.map(|_| format!("user-{identifier}")),
             team: Some("TEST".to_string()),
-            team_id: format!("team-{}", identifier),
+            team_id: format!("team-{identifier}"),
         }
     }
 
@@ -1833,15 +1829,13 @@ console.log("Hello, World!");
             // All should have syntax highlighting (ANSI codes)
             assert!(
                 result.contains("\x1b["),
-                "Language '{}' should have syntax highlighting",
-                lang
+                "Language '{lang}' should have syntax highlighting"
             );
 
             // Should contain the original code content
             assert!(
                 result.contains(code.split_whitespace().next().unwrap()),
-                "Language '{}' should preserve code content",
-                lang
+                "Language '{lang}' should preserve code content"
             );
         }
     }
@@ -1906,15 +1900,13 @@ interface User {
             // Should contain ANSI color codes (indicating highlighting worked)
             assert!(
                 result.contains("\x1b["),
-                "Token '{}' should produce syntax highlighting",
-                token
+                "Token '{token}' should produce syntax highlighting"
             );
 
             // Should contain the original code
             assert!(
                 result.contains(code.split_whitespace().next().unwrap()),
-                "Token '{}' should preserve code content",
-                token
+                "Token '{token}' should preserve code content"
             );
         }
     }
@@ -1994,8 +1986,7 @@ interface User {
             // Should contain ANSI color codes (indicating highlighting worked)
             assert!(
                 result.contains("\x1b["),
-                "Extension '{}' should produce syntax highlighting",
-                ext
+                "Extension '{ext}' should produce syntax highlighting"
             );
         }
     }

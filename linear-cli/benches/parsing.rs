@@ -184,7 +184,7 @@ fn benchmark_string_operations(c: &mut Criterion) {
         b.iter(|| {
             let mut result = String::new();
             for i in 0..100 {
-                result.push_str(&format!("item-{} ", i));
+                result.push_str(&format!("item-{i} "));
             }
             result
         });
