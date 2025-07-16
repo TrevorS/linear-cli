@@ -1008,4 +1008,122 @@ impl<'a> InteractivePrompter<'a> {
             ),
         })
     }
+
+    /// Resolve project input to project ID
+    /// Supports both project names and project UUIDs with fuzzy matching
+    pub async fn resolve_project(&self, project: &str) -> SdkResult<Option<String>> {
+        // Handle special cases
+        if project.eq_ignore_ascii_case("none")
+            || project.eq_ignore_ascii_case("unassigned")
+            || project.eq_ignore_ascii_case("null")
+        {
+            return Ok(None);
+        }
+
+        // Check if it looks like a UUID
+        if project.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && project.len() > 20 {
+            return Ok(Some(project.to_string()));
+        }
+
+        // Get all projects
+        let projects = self.client.list_projects(100).await?;
+
+        if projects.is_empty() {
+            return Err(LinearError::InvalidInput {
+                message: "No projects found. Create a project first.".to_string(),
+            });
+        }
+
+        // Try exact name match first (case insensitive)
+        for proj in &projects {
+            if proj.name.eq_ignore_ascii_case(project) {
+                return Ok(Some(proj.id.clone()));
+            }
+        }
+
+        // Try fuzzy matching
+        let suggestions = self.suggest_similar_projects(project, &projects)?;
+
+        if suggestions.is_empty() {
+            return Err(LinearError::InvalidInput {
+                message: format!(
+                    "Project '{}' not found. Use 'linear projects' to see all available projects.",
+                    project
+                ),
+            });
+        }
+
+        // If we have exactly one suggestion, suggest it in the error
+        if suggestions.len() == 1 {
+            return Err(LinearError::InvalidInput {
+                message: format!(
+                    "Project '{}' not found. Did you mean '{}'? Use 'linear projects' to see all available projects.",
+                    project, suggestions[0]
+                ),
+            });
+        }
+
+        // Multiple suggestions
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Project '{}' not found. Did you mean one of: {}? Use 'linear projects' to see all available projects.",
+                project, suggestions.join(", ")
+            ),
+        })
+    }
+
+    /// Suggest similar project names for improved UX
+    pub fn suggest_similar_projects(
+        &self,
+        input: &str,
+        projects: &[linear_sdk::Project],
+    ) -> SdkResult<Vec<String>> {
+        let mut suggestions = Vec::new();
+        let input_lower = input.to_lowercase();
+
+        // Look for partial matches in project names
+        for project in projects {
+            if project.name.to_lowercase().contains(&input_lower) {
+                suggestions.push(project.name.clone());
+            }
+        }
+
+        // Limit suggestions to avoid overwhelming the user
+        suggestions.truncate(3);
+
+        Ok(suggestions)
+    }
 }
+
+/*
+#[cfg(test)]
+mod tests {
+    // Note: These tests are placeholder implementations that need proper mocking
+    // Temporarily commented out to avoid compilation errors
+    // TODO: Implement proper mocking for LinearClient and complete these tests
+
+    use super::*;
+    use linear_sdk::{Project, ProjectLead};
+
+    /// Create a mock project for testing
+    fn create_mock_project(id: &str, name: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: Some("Test project".to_string()),
+            state: "active".to_string(),
+            progress: Some(0.5),
+            url: format!("https://linear.app/project/{}", id),
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+            updated_at: "2023-01-01T00:00:00Z".to_string(),
+            lead: Some(ProjectLead {
+                id: "lead-123".to_string(),
+                name: "John Doe".to_string(),
+                display_name: "John Doe".to_string(),
+            }),
+        }
+    }
+
+    // Test implementations would go here once proper mocking is set up
+}
+*/

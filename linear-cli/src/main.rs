@@ -164,6 +164,14 @@ enum Commands {
         #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
         priority: Option<i64>,
 
+        /// Project name to assign the issue to
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Project ID to assign the issue to (alternative to --project)
+        #[arg(long, conflicts_with = "project")]
+        project_id: Option<String>,
+
         /// Create issue from markdown file with frontmatter
         #[arg(long, short = 'f', value_name = "FILE")]
         from_file: Option<String>,
@@ -200,6 +208,14 @@ enum Commands {
         /// New priority (1=Urgent, 2=High, 3=Normal, 4=Low)
         #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
         priority: Option<i64>,
+
+        /// Project name to assign the issue to (use "none" to remove)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Project ID to assign the issue to (alternative to --project)
+        #[arg(long, conflicts_with = "project")]
+        project_id: Option<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -375,6 +391,8 @@ struct CreateCommandArgs {
     team: Option<String>,
     assignee: Option<String>,
     priority: Option<i64>,
+    project: Option<String>,
+    project_id: Option<String>,
     from_file: Option<String>,
     open: bool,
     dry_run: bool,
@@ -1023,6 +1041,25 @@ async fn handle_create_from_file(
         return Ok(());
     }
 
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!(
+                    "Failed to resolve project '{}': {}",
+                    project_name, e
+                ));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
+
     // Build the SDK create input
     let sdk_input = linear_sdk::CreateIssueInput {
         title: input.title,
@@ -1030,6 +1067,7 @@ async fn handle_create_from_file(
         team_id: Some(input.team_id),
         assignee_id: input.assignee_id,
         priority: input.priority,
+        project_id,
         label_ids: None, // Future enhancement - need to resolve label names to IDs
     };
 
@@ -1208,6 +1246,25 @@ async fn handle_create_command(
         return Ok(());
     }
 
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!(
+                    "Failed to resolve project '{}': {}",
+                    project_name, e
+                ));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
+
     // Build the SDK create input
     let sdk_input = linear_sdk::CreateIssueInput {
         title: input.title,
@@ -1215,6 +1272,7 @@ async fn handle_create_command(
         team_id: Some(input.team_id),
         assignee_id: input.assignee_id,
         priority: input.priority,
+        project_id,
         label_ids: None, // Future enhancement
     };
 
@@ -1271,6 +1329,8 @@ struct UpdateCommandArgs {
     assignee: Option<String>,
     status: Option<String>,
     priority: Option<i64>,
+    project: Option<String>,
+    project_id: Option<String>,
     force: bool,
 }
 
@@ -1288,9 +1348,11 @@ async fn handle_update_command(
         && args.assignee.is_none()
         && args.status.is_none()
         && args.priority.is_none()
+        && args.project.is_none()
+        && args.project_id.is_none()
     {
         cli_output.error("At least one field must be specified for update");
-        eprintln!("Use --title, --description, --assignee, --status, or --priority");
+        eprintln!("Use --title, --description, --assignee, --status, --priority, --project, or --project-id");
         std::process::exit(1);
     }
 
@@ -1325,12 +1387,32 @@ async fn handle_update_command(
         None
     };
 
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!(
+                    "Failed to resolve project '{}': {}",
+                    project_name, e
+                ));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
+
     let input = linear_sdk::UpdateIssueInput {
         title: args.title,
         description: args.description,
         assignee_id,
         state_id,
         priority: args.priority,
+        project_id,
         label_ids: None, // Future enhancement
     };
 
@@ -1451,6 +1533,7 @@ async fn handle_close_command(
         assignee_id: None,
         state_id: Some(done_state_id),
         priority: None,
+        project_id: None,
         label_ids: None,
     };
 
@@ -1521,6 +1604,7 @@ async fn handle_reopen_command(
         assignee_id: None,
         state_id: Some(todo_state_id),
         priority: None,
+        project_id: None,
         label_ids: None,
     };
 
@@ -1986,6 +2070,8 @@ async fn run_async_commands(
             team,
             assignee,
             priority,
+            project,
+            project_id,
             from_file,
             open,
             dry_run,
@@ -1996,6 +2082,8 @@ async fn run_async_commands(
                 team,
                 assignee,
                 priority,
+                project,
+                project_id,
                 from_file,
                 open,
                 dry_run,
@@ -2055,6 +2143,8 @@ async fn run_async_commands(
             assignee,
             status,
             priority,
+            project,
+            project_id,
             force,
         } => {
             handle_update_command(
@@ -2066,6 +2156,8 @@ async fn run_async_commands(
                     assignee,
                     status,
                     priority,
+                    project,
+                    project_id,
                     force,
                 },
                 use_color,
@@ -3339,6 +3431,8 @@ mod tests {
             team: Some("ENG".to_string()),
             assignee: Some("me".to_string()),
             priority: Some(2),
+            project: None,
+            project_id: None,
             from_file: None,
             open: true,
             dry_run: false,
