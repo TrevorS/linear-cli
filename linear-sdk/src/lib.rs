@@ -289,6 +289,7 @@ pub struct CreateIssueInput {
     pub assignee_id: Option<String>,
     pub priority: Option<i64>,
     pub label_ids: Option<Vec<String>>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -299,6 +300,7 @@ pub struct UpdateIssueInput {
     pub state_id: Option<String>,
     pub priority: Option<i64>,
     pub label_ids: Option<Vec<String>>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -585,7 +587,7 @@ impl LinearClient {
                 .split("::")
                 .last()
                 .unwrap_or("unknown");
-            log::debug!("Sending GraphQL query: {}", query_name);
+            log::debug!("Sending GraphQL query: {query_name}");
             log::debug!(
                 "Request body: {}",
                 serde_json::to_string_pretty(&request_body).unwrap_or_default()
@@ -602,7 +604,7 @@ impl LinearClient {
             async move {
                 let start_time = std::time::Instant::now();
                 let response = client
-                    .post(format!("{}/graphql", base_url))
+                    .post(format!("{base_url}/graphql"))
                     .json(request_body)
                     .send()
                     .await
@@ -625,7 +627,7 @@ impl LinearClient {
 
                 if let Some(errors) = response_body.errors {
                     return Err(LinearError::GraphQL {
-                        message: format!("{:?}", errors),
+                        message: format!("{errors:?}"),
                         errors: vec![],
                     });
                 }
@@ -1024,7 +1026,7 @@ impl LinearClient {
 
                 // Initialize other available fields to sensible defaults
                 state_id: None,
-                project_id: None,
+                project_id: input.project_id,
                 project_milestone_id: None,
                 parent_id: None,
                 due_date: None,
@@ -1471,7 +1473,7 @@ impl LinearClient {
         }
 
         Err(LinearError::InvalidInput {
-            message: format!("Team with key '{}' not found", team_key),
+            message: format!("Team with key '{team_key}' not found"),
         })
     }
 
@@ -1500,7 +1502,7 @@ impl LinearClient {
 
                 // Initialize other available fields to sensible defaults
                 team_id: None,
-                project_id: None,
+                project_id: input.project_id,
                 project_milestone_id: None,
                 parent_id: None,
                 due_date: None,
@@ -1925,7 +1927,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .unwrap();
         let result = client.execute_viewer_query().await;
@@ -2049,7 +2051,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .expect("Failed to create client");
         let result = client.list_issues(5).await;
@@ -2395,7 +2397,7 @@ mod tests {
             .expect("LINEAR_API_KEY must be set for integration tests");
 
         let client = LinearClient::builder()
-            .auth_token(SecretString::new(api_key))
+            .auth_token(SecretString::new(api_key.into()))
             .build()
             .expect("Failed to create client");
 
@@ -2448,6 +2450,7 @@ mod tests {
             assignee_id: Some("user-456".to_string()),
             priority: Some(2),
             label_ids: Some(vec!["label-789".to_string()]),
+            project_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2497,6 +2500,7 @@ mod tests {
             assignee_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2540,6 +2544,7 @@ mod tests {
             assignee_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2576,6 +2581,7 @@ mod tests {
             assignee_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2612,6 +2618,7 @@ mod tests {
             assignee_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2650,6 +2657,7 @@ mod tests {
             state_id: Some("state-456".to_string()),
             priority: Some(3),
             label_ids: Some(vec!["label-456".to_string()]),
+            project_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2699,6 +2707,7 @@ mod tests {
             state_id: Some("state-456".to_string()),
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2733,6 +2742,7 @@ mod tests {
             state_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2769,6 +2779,7 @@ mod tests {
             state_id: None,
             priority: None,
             label_ids: None,
+            project_id: None,
         };
 
         let result = client.update_issue("INVALID-123".to_string(), input).await;

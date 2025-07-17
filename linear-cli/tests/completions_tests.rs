@@ -194,8 +194,7 @@ fn test_completion_generator_creation() {
         let output_str = String::from_utf8(output.into_inner()).expect("Should be valid UTF-8");
         assert!(
             !output_str.is_empty(),
-            "Output should not be empty for {}",
-            shell
+            "Output should not be empty for {shell}"
         );
     }
 }

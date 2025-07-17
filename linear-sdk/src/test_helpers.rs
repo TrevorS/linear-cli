@@ -565,3 +565,116 @@ pub fn mock_team_states_no_default_response() -> serde_json::Value {
         }
     })
 }
+
+#[cfg(test)]
+pub fn mock_projects_response() -> serde_json::Value {
+    serde_json::json!({
+        "data": {
+            "projects": {
+                "nodes": [
+                    {
+                        "id": "proj-123",
+                        "name": "Mobile App",
+                        "description": "iOS and Android mobile application",
+                        "state": "active",
+                        "progress": 0.75,
+                        "url": "https://linear.app/project/proj-123",
+                        "createdAt": "2023-01-01T00:00:00Z",
+                        "updatedAt": "2023-06-01T00:00:00Z",
+                        "lead": {
+                            "id": "lead-456",
+                            "name": "Alice Smith",
+                            "displayName": "Alice Smith"
+                        }
+                    },
+                    {
+                        "id": "proj-456",
+                        "name": "Web App",
+                        "description": "Frontend web application",
+                        "state": "active",
+                        "progress": 0.60,
+                        "url": "https://linear.app/project/proj-456",
+                        "createdAt": "2023-02-01T00:00:00Z",
+                        "updatedAt": "2023-06-01T00:00:00Z",
+                        "lead": {
+                            "id": "lead-789",
+                            "name": "Bob Johnson",
+                            "displayName": "Bob Johnson"
+                        }
+                    },
+                    {
+                        "id": "proj-789",
+                        "name": "Backend API",
+                        "description": "Core backend services and API",
+                        "state": "active",
+                        "progress": 0.85,
+                        "url": "https://linear.app/project/proj-789",
+                        "createdAt": "2023-03-01T00:00:00Z",
+                        "updatedAt": "2023-06-01T00:00:00Z",
+                        "lead": {
+                            "id": "lead-321",
+                            "name": "Carol Davis",
+                            "displayName": "Carol Davis"
+                        }
+                    },
+                    {
+                        "id": "proj-999",
+                        "name": "Mobile Application",
+                        "description": "Similar name for fuzzy matching test",
+                        "state": "completed",
+                        "progress": 1.0,
+                        "url": "https://linear.app/project/proj-999",
+                        "createdAt": "2023-04-01T00:00:00Z",
+                        "updatedAt": "2023-05-01T00:00:00Z",
+                        "lead": null
+                    }
+                ],
+                "pageInfo": {
+                    "hasNextPage": false,
+                    "hasPreviousPage": false,
+                    "startCursor": "cursor-start",
+                    "endCursor": "cursor-end"
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_empty_projects_response() -> serde_json::Value {
+    serde_json::json!({
+        "data": {
+            "projects": {
+                "nodes": [],
+                "pageInfo": {
+                    "hasNextPage": false,
+                    "hasPreviousPage": false,
+                    "startCursor": null,
+                    "endCursor": null
+                }
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+pub fn mock_projects_error_response() -> serde_json::Value {
+    serde_json::json!({
+        "errors": [
+            {
+                "message": "Failed to fetch projects",
+                "locations": [
+                    {
+                        "line": 2,
+                        "column": 3
+                    }
+                ],
+                "path": ["projects"],
+                "extensions": {
+                    "code": "INTERNAL_ERROR"
+                }
+            }
+        ],
+        "data": null
+    })
+}

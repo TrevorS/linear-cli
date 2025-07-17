@@ -64,7 +64,7 @@ where
                 }
 
                 if verbose {
-                    log::debug!("Request failed (retryable): {}", error);
+                    log::debug!("Request failed (retryable): {error}");
                 }
                 last_error = Some(error);
             }

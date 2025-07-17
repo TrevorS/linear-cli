@@ -1,7 +1,7 @@
 // ABOUTME: Main entry point for the Linear CLI application
 // ABOUTME: Provides command-line interface for Linear issue tracking
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
@@ -10,6 +10,7 @@ use std::env;
 use std::io::IsTerminal;
 
 mod aliases;
+mod cli;
 mod cli_output;
 mod completions;
 mod config;
@@ -26,6 +27,9 @@ mod types;
 mod image_protocols;
 
 use crate::aliases::AliasExpander;
+#[cfg(feature = "inline-images")]
+use crate::cli::ImageAction;
+use crate::cli::{Cli, Commands};
 use crate::cli_output::CliOutput;
 use crate::config::Config;
 use crate::output::{JsonFormatter, OutputFormat, TableFormatter};
@@ -66,307 +70,8 @@ fn display_error(error: &LinearError, use_color: bool) {
 
     if let Some(help) = error.help_text() {
         eprintln!();
-        eprintln!("{}", help);
+        eprintln!("{help}");
     }
-}
-
-#[derive(Parser)]
-#[command(name = "linear")]
-#[command(about = "A CLI for Linear", long_about = None)]
-#[command(version)]
-struct Cli {
-    /// Disable colored output
-    #[arg(long, global = true)]
-    no_color: bool,
-
-    /// Force colored output even when piped
-    #[arg(long, global = true, conflicts_with = "no_color")]
-    force_color: bool,
-
-    /// Enable verbose output for debugging
-    #[arg(long, short, global = true)]
-    verbose: bool,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// List issues
-    Issues {
-        /// Maximum number of issues to fetch
-        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
-        limit: i32,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-
-        /// Filter by assignee (use "me" for yourself)
-        #[arg(long)]
-        assignee: Option<String>,
-
-        /// Filter by status (case insensitive)
-        #[arg(long)]
-        status: Option<String>,
-
-        /// Filter by team
-        #[arg(long)]
-        team: Option<String>,
-    },
-    /// Show details for a single issue
-    Issue {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Force raw markdown output (skip rich formatting)
-        #[arg(long)]
-        raw: bool,
-
-        /// Disable inline image display (requires inline-images feature)
-        #[cfg(feature = "inline-images")]
-        #[arg(long)]
-        no_images: bool,
-
-        /// Force inline image display even in unsupported terminals (requires inline-images feature)
-        #[cfg(feature = "inline-images")]
-        #[arg(long, conflicts_with = "no_images")]
-        force_images: bool,
-    },
-    /// Create a new issue
-    Create {
-        /// Issue title
-        #[arg(long)]
-        title: Option<String>,
-
-        /// Issue description
-        #[arg(long)]
-        description: Option<String>,
-
-        /// Team key (e.g., ENG) or UUID
-        #[arg(long)]
-        team: Option<String>,
-
-        /// Assignee (use "me" for yourself)
-        #[arg(long)]
-        assignee: Option<String>,
-
-        /// Priority (1=Urgent, 2=High, 3=Normal, 4=Low)
-        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
-        priority: Option<i64>,
-
-        /// Create issue from markdown file with frontmatter
-        #[arg(long, short = 'f', value_name = "FILE")]
-        from_file: Option<String>,
-
-        /// Open the created issue in browser
-        #[arg(long)]
-        open: bool,
-
-        /// Show what would be created without actually creating it
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Update an existing issue
-    Update {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// New title for the issue
-        #[arg(long)]
-        title: Option<String>,
-
-        /// New description for the issue
-        #[arg(long)]
-        description: Option<String>,
-
-        /// New assignee (use "me" for yourself, "unassigned" to unassign)
-        #[arg(long)]
-        assignee: Option<String>,
-
-        /// New status/state for the issue
-        #[arg(long)]
-        status: Option<String>,
-
-        /// New priority (1=Urgent, 2=High, 3=Normal, 4=Low)
-        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
-        priority: Option<i64>,
-
-        /// Skip confirmation prompt
-        #[arg(long)]
-        force: bool,
-    },
-    /// Close an issue (convenience command)
-    Close {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// Skip confirmation prompt
-        #[arg(long)]
-        force: bool,
-    },
-    /// Reopen an issue (convenience command)
-    Reopen {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// Skip confirmation prompt
-        #[arg(long)]
-        force: bool,
-    },
-    /// Add a comment to an issue
-    Comment {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// Comment text (if not provided, will read from stdin)
-        message: Option<String>,
-    },
-    /// Check connection to Linear
-    Status {
-        /// Show detailed connection info
-        #[arg(long)]
-        verbose: bool,
-    },
-    /// Login using OAuth (requires oauth feature)
-    #[cfg(feature = "oauth")]
-    Login {
-        /// Force new login even if token exists
-        #[arg(long)]
-        force: bool,
-        /// OAuth Client ID (can also be set via LINEAR_OAUTH_CLIENT_ID env var)
-        #[arg(long)]
-        client_id: Option<String>,
-    },
-    /// Logout and clear stored credentials (requires oauth feature)
-    #[cfg(feature = "oauth")]
-    Logout,
-    /// List projects
-    Projects {
-        /// Maximum number of projects to fetch
-        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
-        limit: i32,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-    },
-    /// List teams
-    Teams {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-    },
-    /// Show comments for an issue
-    Comments {
-        /// Issue identifier (e.g., ENG-123)
-        id: String,
-
-        /// Maximum number of comments to fetch
-        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
-        limit: i32,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-    },
-    /// Show your assigned and created issues
-    MyWork {
-        /// Maximum number of issues to fetch per category
-        #[arg(short, long, default_value = "20", value_parser = clap::value_parser!(i32).range(1..))]
-        limit: i32,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-    },
-    /// Search across issues, projects, and comments
-    Search {
-        /// Search query string
-        query: String,
-
-        /// Search only in issues (default: search all types)
-        #[arg(long)]
-        issues_only: bool,
-
-        /// Search only in documents
-        #[arg(long)]
-        docs_only: bool,
-
-        /// Search only in projects
-        #[arg(long)]
-        projects_only: bool,
-
-        /// Maximum number of results per type
-        #[arg(short, long, default_value = "10", value_parser = clap::value_parser!(i32).range(1..=100))]
-        limit: i32,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-
-        /// Pretty print JSON output
-        #[arg(long, requires = "json")]
-        pretty: bool,
-
-        /// Include archived results
-        #[arg(long)]
-        include_archived: bool,
-    },
-    /// Manage image cache and diagnostics (requires inline-images feature)
-    #[cfg(feature = "inline-images")]
-    Images {
-        #[command(subcommand)]
-        action: ImageAction,
-    },
-    /// Generate shell completions
-    Completions {
-        /// Shell to generate completions for
-        #[arg(value_enum)]
-        shell: completions::Shell,
-    },
-}
-
-#[cfg(feature = "inline-images")]
-#[derive(Subcommand)]
-enum ImageAction {
-    /// Clear the image cache
-    Clear,
-    /// Show cache statistics and information
-    Stats,
-    /// Test image protocol support for current terminal
-    Test {
-        /// Test URL to use (optional, uses a small test image if not provided)
-        #[arg(long)]
-        url: Option<String>,
-    },
-    /// Show detailed diagnostics about image capabilities
-    Diagnostics,
 }
 
 struct CreateCommandArgs {
@@ -375,6 +80,8 @@ struct CreateCommandArgs {
     team: Option<String>,
     assignee: Option<String>,
     priority: Option<i64>,
+    project: Option<String>,
+    project_id: Option<String>,
     from_file: Option<String>,
     open: bool,
     dry_run: bool,
@@ -797,7 +504,7 @@ fn main() -> Result<()> {
         match expander.expand(original_args) {
             Ok(expanded_args) => expanded_args,
             Err(e) => {
-                eprintln!("Error expanding aliases: {}", e);
+                eprintln!("Error expanding aliases: {e}");
                 std::process::exit(1);
             }
         }
@@ -911,10 +618,7 @@ async fn handle_create_from_file(
     let markdown_file = match crate::frontmatter::parse_markdown_file(file_path) {
         Ok(file) => file,
         Err(e) => {
-            cli_output.error(&format!(
-                "Failed to parse markdown file '{}': {}",
-                file_path, e
-            ));
+            cli_output.error(&format!("Failed to parse markdown file '{file_path}': {e}"));
             std::process::exit(1);
         }
     };
@@ -963,7 +667,7 @@ async fn handle_create_from_file(
                 match client.resolve_team_key_to_id(&team).await {
                     Ok(team_id) => team_id,
                     Err(e) => {
-                        cli_output.error(&format!("Failed to resolve team '{}': {}", team, e));
+                        cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
                         std::process::exit(1);
                     }
                 }
@@ -1002,26 +706,42 @@ async fn handle_create_from_file(
     if args.dry_run {
         cli_output.info("Dry run mode - no issue will be created");
         println!();
-        println!("Would create issue from file '{}':", file_path);
+        println!("Would create issue from file '{file_path}':");
         println!("  Title: {}", input.title);
         if let Some(desc) = &input.description {
-            println!("  Description: {}", desc);
+            println!("  Description: {desc}");
         }
         println!("  Team ID: {}", input.team_id);
         if let Some(assignee_id) = &input.assignee_id {
-            println!("  Assignee ID: {}", assignee_id);
+            println!("  Assignee ID: {assignee_id}");
         }
         if let Some(priority) = input.priority {
-            println!("  Priority: {}", priority);
+            println!("  Priority: {priority}");
         }
         if let Some(labels) = &markdown_file.frontmatter.labels {
-            println!("  Labels: {:?} (not yet supported)", labels);
+            println!("  Labels: {labels:?} (not yet supported)");
         }
         if let Some(project) = &markdown_file.frontmatter.project {
-            println!("  Project: {} (not yet supported)", project);
+            println!("  Project: {project} (not yet supported)");
         }
         return Ok(());
     }
+
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
 
     // Build the SDK create input
     let sdk_input = linear_sdk::CreateIssueInput {
@@ -1030,6 +750,7 @@ async fn handle_create_from_file(
         team_id: Some(input.team_id),
         assignee_id: input.assignee_id,
         priority: input.priority,
+        project_id,
         label_ids: None, // Future enhancement - need to resolve label names to IDs
     };
 
@@ -1045,7 +766,7 @@ async fn handle_create_from_file(
                 cli_output.success(&format!("Created issue: {}", created_issue.identifier));
                 println!("Title: {}", created_issue.title);
                 if let Some(desc) = &created_issue.description {
-                    println!("Description: {}", desc);
+                    println!("Description: {desc}");
                 }
                 println!("Status: {}", created_issue.state.name);
                 if let Some(assignee) = &created_issue.assignee {
@@ -1102,7 +823,7 @@ async fn handle_create_command(
         let prompter = match InteractivePrompter::new_with_defaults(client) {
             Ok(prompter) => prompter,
             Err(e) => {
-                cli_output.error(&format!("Failed to initialize interactive prompter: {}", e));
+                cli_output.error(&format!("Failed to initialize interactive prompter: {e}"));
                 std::process::exit(1);
             }
         };
@@ -1124,7 +845,7 @@ async fn handle_create_command(
         match prompter.collect_create_input(options).await {
             Ok(input) => input,
             Err(e) => {
-                cli_output.error(&format!("Failed to collect issue details: {}", e));
+                cli_output.error(&format!("Failed to collect issue details: {e}"));
                 std::process::exit(1);
             }
         }
@@ -1152,7 +873,7 @@ async fn handle_create_command(
                     match client.resolve_team_key_to_id(&team).await {
                         Ok(team_id) => team_id,
                         Err(e) => {
-                            cli_output.error(&format!("Failed to resolve team '{}': {}", team, e));
+                            cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
                             std::process::exit(1);
                         }
                     }
@@ -1196,17 +917,33 @@ async fn handle_create_command(
         println!("Would create issue:");
         println!("  Title: {}", input.title);
         if let Some(desc) = &input.description {
-            println!("  Description: {}", desc);
+            println!("  Description: {desc}");
         }
         println!("  Team ID: {}", input.team_id);
         if let Some(assignee_id) = &input.assignee_id {
-            println!("  Assignee ID: {}", assignee_id);
+            println!("  Assignee ID: {assignee_id}");
         }
         if let Some(priority) = input.priority {
-            println!("  Priority: {}", priority);
+            println!("  Priority: {priority}");
         }
         return Ok(());
     }
+
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
 
     // Build the SDK create input
     let sdk_input = linear_sdk::CreateIssueInput {
@@ -1215,6 +952,7 @@ async fn handle_create_command(
         team_id: Some(input.team_id),
         assignee_id: input.assignee_id,
         priority: input.priority,
+        project_id,
         label_ids: None, // Future enhancement
     };
 
@@ -1230,7 +968,7 @@ async fn handle_create_command(
                 cli_output.success(&format!("Created issue: {}", created_issue.identifier));
                 println!("Title: {}", created_issue.title);
                 if let Some(desc) = &created_issue.description {
-                    println!("Description: {}", desc);
+                    println!("Description: {desc}");
                 }
                 println!("Status: {}", created_issue.state.name);
                 if let Some(assignee) = &created_issue.assignee {
@@ -1271,6 +1009,8 @@ struct UpdateCommandArgs {
     assignee: Option<String>,
     status: Option<String>,
     priority: Option<i64>,
+    project: Option<String>,
+    project_id: Option<String>,
     force: bool,
 }
 
@@ -1288,9 +1028,11 @@ async fn handle_update_command(
         && args.assignee.is_none()
         && args.status.is_none()
         && args.priority.is_none()
+        && args.project.is_none()
+        && args.project_id.is_none()
     {
         cli_output.error("At least one field must be specified for update");
-        eprintln!("Use --title, --description, --assignee, --status, or --priority");
+        eprintln!("Use --title, --description, --assignee, --status, --priority, --project, or --project-id");
         std::process::exit(1);
     }
 
@@ -1325,12 +1067,29 @@ async fn handle_update_command(
         None
     };
 
+    // Resolve project if provided
+    let project_id = if let Some(project_name) = &args.project {
+        // Use project name - need to resolve to ID
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(project_name).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        args.project_id.clone()
+    };
+
     let input = linear_sdk::UpdateIssueInput {
         title: args.title,
         description: args.description,
         assignee_id,
         state_id,
         priority: args.priority,
+        project_id,
         label_ids: None, // Future enhancement
     };
 
@@ -1338,25 +1097,25 @@ async fn handle_update_command(
     if !args.force && is_interactive {
         println!("Would update issue {}:", args.id);
         if let Some(ref title) = input.title {
-            println!("  Title: {}", title);
+            println!("  Title: {title}");
         }
         if let Some(ref description) = input.description {
-            println!("  Description: {}", description);
+            println!("  Description: {description}");
         }
         if let Some(ref assignee_id) = input.assignee_id {
             if assignee_id.is_empty() {
                 println!("  Assignee: Unassigned");
             } else {
-                println!("  Assignee: {}", assignee_id);
+                println!("  Assignee: {assignee_id}");
             }
         }
         if let Some(ref _state_id) = input.state_id {
             if let Some(ref status_name) = args.status {
-                println!("  Status: {}", status_name);
+                println!("  Status: {status_name}");
             }
         }
         if let Some(priority) = input.priority {
-            println!("  Priority: {}", priority);
+            println!("  Priority: {priority}");
         }
         println!();
 
@@ -1384,7 +1143,7 @@ async fn handle_update_command(
                 cli_output.success(&format!("Updated issue: {}", updated_issue.identifier));
                 println!("Title: {}", updated_issue.title);
                 if let Some(desc) = &updated_issue.description {
-                    println!("Description: {}", desc);
+                    println!("Description: {desc}");
                 }
                 println!("Status: {}", updated_issue.state.name);
                 if let Some(assignee) = &updated_issue.assignee {
@@ -1422,7 +1181,7 @@ async fn handle_close_command(
 
     // Show preview unless --force is used
     if !force && is_interactive {
-        println!("Would close issue: {}", id);
+        println!("Would close issue: {id}");
         println!();
 
         print!("Continue with close? [y/N]: ");
@@ -1451,6 +1210,7 @@ async fn handle_close_command(
         assignee_id: None,
         state_id: Some(done_state_id),
         priority: None,
+        project_id: None,
         label_ids: None,
     };
 
@@ -1492,7 +1252,7 @@ async fn handle_reopen_command(
 
     // Show preview unless --force is used
     if !force && is_interactive {
-        println!("Would reopen issue: {}", id);
+        println!("Would reopen issue: {id}");
         println!();
 
         print!("Continue with reopen? [y/N]: ");
@@ -1521,6 +1281,7 @@ async fn handle_reopen_command(
         assignee_id: None,
         state_id: Some(todo_state_id),
         priority: None,
+        project_id: None,
         label_ids: None,
     };
 
@@ -1568,7 +1329,7 @@ async fn handle_comment_command(
         use std::io::Read;
         let mut buffer = String::new();
         if let Err(e) = std::io::stdin().read_to_string(&mut buffer) {
-            cli_output.error(&format!("Failed to read from stdin: {}", e));
+            cli_output.error(&format!("Failed to read from stdin: {e}"));
             std::process::exit(1);
         }
 
@@ -1725,7 +1486,7 @@ async fn run_async_commands(
         #[cfg(feature = "oauth")]
         {
             // OAuth tokens need "Bearer " prefix
-            let bearer_token = format!("Bearer {}", auth_token);
+            let bearer_token = format!("Bearer {auth_token}");
             match LinearClient::builder()
                 .auth_token(SecretString::new(bearer_token.into_boxed_str()))
                 .base_url(config.api_url.clone())
@@ -1833,7 +1594,7 @@ async fn run_async_commands(
                         }
                     }
                 };
-                println!("{}", output);
+                println!("{output}");
             }
         }
         Commands::Issue {
@@ -1845,7 +1606,7 @@ async fn run_async_commands(
             #[cfg(feature = "inline-images")]
             force_images,
         } => {
-            let spinner = create_spinner(&format!("Fetching issue {}...", id), is_interactive);
+            let spinner = create_spinner(&format!("Fetching issue {id}..."), is_interactive);
             match client.get_issue(id).await {
                 Ok(issue) => {
                     if let Some(s) = spinner {
@@ -1969,7 +1730,7 @@ async fn run_async_commands(
                             }
                         }
                     };
-                    println!("{}", output);
+                    println!("{output}");
                 }
                 Err(e) => {
                     if let Some(s) = spinner {
@@ -1986,6 +1747,8 @@ async fn run_async_commands(
             team,
             assignee,
             priority,
+            project,
+            project_id,
             from_file,
             open,
             dry_run,
@@ -1996,6 +1759,8 @@ async fn run_async_commands(
                 team,
                 assignee,
                 priority,
+                project,
+                project_id,
                 from_file,
                 open,
                 dry_run,
@@ -2055,6 +1820,8 @@ async fn run_async_commands(
             assignee,
             status,
             priority,
+            project,
+            project_id,
             force,
         } => {
             handle_update_command(
@@ -2066,6 +1833,8 @@ async fn run_async_commands(
                     assignee,
                     status,
                     priority,
+                    project,
+                    project_id,
                     force,
                 },
                 use_color,
@@ -2122,7 +1891,7 @@ async fn run_async_commands(
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
-                println!("{}", output);
+                println!("{output}");
             }
         }
         Commands::Teams { json, pretty: _ } => {
@@ -2161,7 +1930,7 @@ async fn run_async_commands(
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
-                println!("{}", output);
+                println!("{output}");
             }
         }
         Commands::Comments {
@@ -2188,7 +1957,7 @@ async fn run_async_commands(
             };
 
             if issue_with_comments.comments.is_empty() && !json && is_interactive {
-                println!("No comments found for issue {}.", id);
+                println!("No comments found for issue {id}.");
             } else {
                 let output = if json {
                     match serde_json::to_string_pretty(&issue_with_comments) {
@@ -2211,7 +1980,7 @@ async fn run_async_commands(
                             .join("\n")
                     )
                 };
-                println!("{}", output);
+                println!("{output}");
             }
         }
         Commands::MyWork {
@@ -2261,7 +2030,7 @@ async fn run_async_commands(
                         .join("\n")
                 )
             };
-            println!("{}", output);
+            println!("{output}");
         }
         Commands::Search {
             query,
@@ -2320,7 +2089,7 @@ async fn run_async_commands(
                         }
                     }
                 };
-                println!("{}", output);
+                println!("{output}");
             } else {
                 // Display grouped results
                 let has_results = !result.issues.is_empty()
@@ -3295,8 +3064,7 @@ mod tests {
 
             assert!(
                 result.is_err(),
-                "Priority {} should be invalid",
-                invalid_priority
+                "Priority {invalid_priority} should be invalid"
             );
         }
     }
@@ -3339,6 +3107,8 @@ mod tests {
             team: Some("ENG".to_string()),
             assignee: Some("me".to_string()),
             priority: Some(2),
+            project: None,
+            project_id: None,
             from_file: None,
             open: true,
             dry_run: false,

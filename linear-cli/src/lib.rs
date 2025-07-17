@@ -2,6 +2,7 @@
 // ABOUTME: Makes internal modules available to integration tests and benchmarks
 
 pub mod aliases;
+pub mod cli;
 pub mod cli_output;
 pub mod completions;
 pub mod config;
@@ -13,6 +14,9 @@ pub mod preferences;
 pub mod search;
 pub mod templates;
 pub mod types;
+
+// Re-export CLI types for testing
+pub use crate::cli::{Cli, Commands};
 
 #[cfg(feature = "inline-images")]
 pub mod image_protocols;

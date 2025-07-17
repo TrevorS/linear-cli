@@ -375,14 +375,13 @@ Negative priority should be invalid.
         for priority in 1..=4 {
             let content = format!(
                 r#"---
-title: "Priority {}"
+title: "Priority {priority}"
 team: ENG
-priority: {}
+priority: {priority}
 ---
 
-Testing priority level {}.
-"#,
-                priority, priority, priority
+Testing priority level {priority}.
+"#
             );
 
             let result = parse_markdown_content(&content).unwrap();

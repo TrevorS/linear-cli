@@ -111,7 +111,7 @@ impl<'a> InteractivePrompter<'a> {
         let is_tty = std::io::stdin().is_terminal();
         let preferences_manager =
             PreferencesManager::new().map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to initialize preferences: {}", e),
+                message: format!("Failed to initialize preferences: {e}"),
             })?;
         let template_manager = TemplateManager::new();
         let cache = PerformanceCache::new();
@@ -165,7 +165,7 @@ impl<'a> InteractivePrompter<'a> {
     /// Search users with caching for improved performance
     async fn search_users_cached(&self, query: &str, limit: i32) -> SdkResult<Vec<User>> {
         // Try cache first
-        let cache_key = format!("{}:{}", query, limit);
+        let cache_key = format!("{query}:{limit}");
         if let Some(users) = self.cache.get_users(&cache_key) {
             log::debug!(
                 "Using cached user search results for '{}' ({} users)",
@@ -176,7 +176,7 @@ impl<'a> InteractivePrompter<'a> {
         }
 
         // Cache miss, fetch from API
-        log::debug!("Cache miss, searching users via API for query: '{}'", query);
+        log::debug!("Cache miss, searching users via API for query: '{query}'");
         let users = self.client.search_users(query, limit).await?;
         self.cache.set_users(&cache_key, users.clone());
         log::debug!(
@@ -218,10 +218,10 @@ impl<'a> InteractivePrompter<'a> {
 
         // Show context if available
         if let Some(branch) = &context_defaults.branch_context {
-            println!("📋 Detected Git branch: {}", branch);
+            println!("📋 Detected Git branch: {branch}");
         }
         if let Some(prefix) = &context_defaults.suggested_title_prefix {
-            println!("💡 Suggested title prefix: {}", prefix);
+            println!("💡 Suggested title prefix: {prefix}");
         }
         println!();
 
@@ -298,7 +298,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(false)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read template choice: {}", e),
+                message: format!("Failed to read template choice: {e}"),
             })?;
 
         if !use_template {
@@ -315,7 +315,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select template: {}", e),
+                message: format!("Failed to select template: {e}"),
             })?;
 
         if selection == 0 {
@@ -351,7 +351,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read title: {}", e),
+                message: format!("Failed to read title: {e}"),
             })?;
 
         Ok(title.trim().to_string())
@@ -397,7 +397,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(default_selection)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team: {}", e),
+                message: format!("Failed to select team: {e}"),
             })?;
 
         Ok(teams[selection].id.clone())
@@ -414,7 +414,7 @@ impl<'a> InteractivePrompter<'a> {
                 .default(true)
                 .interact()
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to read template description choice: {}", e),
+                    message: format!("Failed to read template description choice: {e}"),
                 })?;
 
             if use_template_desc {
@@ -422,7 +422,7 @@ impl<'a> InteractivePrompter<'a> {
                     Editor::new()
                         .edit(&template_desc)
                         .map_err(|e| LinearError::InvalidInput {
-                            message: format!("Failed to open editor: {}", e),
+                            message: format!("Failed to open editor: {e}"),
                         })?;
 
                 return Ok(description.and_then(|d| {
@@ -468,7 +468,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(1) // Default to unassigned or suggested
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select assignee: {}", e),
+                message: format!("Failed to select assignee: {e}"),
             })?;
 
         match selection {
@@ -521,7 +521,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(default_selection)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select priority: {}", e),
+                message: format!("Failed to select priority: {e}"),
             })?;
 
         Ok(match selection {
@@ -550,7 +550,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read title: {}", e),
+                message: format!("Failed to read title: {e}"),
             })?;
 
         Ok(title.trim().to_string())
@@ -563,14 +563,14 @@ impl<'a> InteractivePrompter<'a> {
             .default(false)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read description choice: {}", e),
+                message: format!("Failed to read description choice: {e}"),
             })?;
 
         if use_editor {
             let description = Editor::new()
                 .edit("Enter your issue description here...")
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to open editor: {}", e),
+                    message: format!("Failed to open editor: {e}"),
                 })?;
 
             Ok(description.and_then(|d| {
@@ -587,7 +587,7 @@ impl<'a> InteractivePrompter<'a> {
                 .allow_empty(true)
                 .interact_text()
                 .map_err(|e| LinearError::InvalidInput {
-                    message: format!("Failed to read description: {}", e),
+                    message: format!("Failed to read description: {e}"),
                 })?;
 
             let trimmed = description.trim();
@@ -620,7 +620,7 @@ impl<'a> InteractivePrompter<'a> {
             .items(&team_names)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team: {}", e),
+                message: format!("Failed to select team: {e}"),
             })?;
 
         Ok(teams[selection].id.clone())
@@ -656,7 +656,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(1) // Default to unassigned
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select assignee: {}", e),
+                message: format!("Failed to select assignee: {e}"),
             })?;
 
         match selection {
@@ -708,7 +708,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read search query: {}", e),
+                message: format!("Failed to read search query: {e}"),
             })?;
 
         let search_query = search_query.trim();
@@ -718,14 +718,11 @@ impl<'a> InteractivePrompter<'a> {
             .search_users_cached(search_query, 10)
             .await
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to search users: {}", e),
+                message: format!("Failed to search users: {e}"),
             })?;
 
         if users.is_empty() {
-            println!(
-                "No users found matching '{}'. Try a different search term.",
-                search_query
-            );
+            println!("No users found matching '{search_query}'. Try a different search term.");
             return Ok(None);
         }
 
@@ -750,7 +747,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select user: {}", e),
+                message: format!("Failed to select user: {e}"),
             })?;
 
         if selection == 0 {
@@ -776,7 +773,7 @@ impl<'a> InteractivePrompter<'a> {
                 .iter()
                 .find(|t| t.id == team_id)
                 .ok_or_else(|| LinearError::InvalidInput {
-                    message: format!("Team with ID '{}' not found", team_id),
+                    message: format!("Team with ID '{team_id}' not found"),
                 })?;
 
         if team.members.is_empty() {
@@ -801,7 +798,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0)
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team member: {}", e),
+                message: format!("Failed to select team member: {e}"),
             })?;
 
         if selection == 0 {
@@ -831,7 +828,7 @@ impl<'a> InteractivePrompter<'a> {
             })
             .interact_text()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read user ID: {}", e),
+                message: format!("Failed to read user ID: {e}"),
             })?;
 
         Ok(Some(user_id.trim().to_string()))
@@ -848,7 +845,7 @@ impl<'a> InteractivePrompter<'a> {
             .default(0) // Default to None
             .interact()
             .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select priority: {}", e),
+                message: format!("Failed to select priority: {e}"),
             })?;
 
         Ok(match selection {
@@ -884,21 +881,18 @@ impl<'a> InteractivePrompter<'a> {
 
                         Err(LinearError::InvalidInput {
                             message: format!(
-                                "Team '{}' not found. {} Use 'linear teams' to see all available teams.",
-                                team, suggestion_text
+                                "Team '{team}' not found. {suggestion_text} Use 'linear teams' to see all available teams."
                             ),
                         })
                     }
                     Ok(_) => Err(LinearError::InvalidInput {
                         message: format!(
-                            "Team '{}' not found. Use 'linear teams' to see all available teams.",
-                            team
+                            "Team '{team}' not found. Use 'linear teams' to see all available teams."
                         ),
                     }),
                     Err(_) => Err(LinearError::InvalidInput {
                         message: format!(
-                            "Team '{}' not found and unable to fetch team suggestions.",
-                            team
+                            "Team '{team}' not found and unable to fetch team suggestions."
                         ),
                     }),
                 }
@@ -968,8 +962,7 @@ impl<'a> InteractivePrompter<'a> {
         if users.is_empty() {
             return Err(LinearError::InvalidInput {
                 message: format!(
-                    "User '{}' not found. Use 'linear users' to see available users.",
-                    assignee
+                    "User '{assignee}' not found. Use 'linear users' to see available users."
                 ),
             });
         }
@@ -1007,5 +1000,417 @@ impl<'a> InteractivePrompter<'a> {
                 user_list.join(", ")
             ),
         })
+    }
+
+    /// Resolve project input to project ID
+    /// Supports both project names and project UUIDs with fuzzy matching
+    pub async fn resolve_project(&self, project: &str) -> SdkResult<Option<String>> {
+        // Handle special cases
+        if project.eq_ignore_ascii_case("none")
+            || project.eq_ignore_ascii_case("unassigned")
+            || project.eq_ignore_ascii_case("null")
+        {
+            return Ok(None);
+        }
+
+        // Check if it looks like a UUID
+        if project.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && project.len() > 20 {
+            return Ok(Some(project.to_string()));
+        }
+
+        // Get all projects
+        let projects = self.client.list_projects(100).await?;
+
+        if projects.is_empty() {
+            return Err(LinearError::InvalidInput {
+                message: "No projects found. Create a project first.".to_string(),
+            });
+        }
+
+        // Try exact name match first (case insensitive)
+        for proj in &projects {
+            if proj.name.eq_ignore_ascii_case(project) {
+                return Ok(Some(proj.id.clone()));
+            }
+        }
+
+        // Try fuzzy matching
+        let suggestions = self.suggest_similar_projects(project, &projects)?;
+
+        if suggestions.is_empty() {
+            return Err(LinearError::InvalidInput {
+                message: format!(
+                    "Project '{project}' not found. Use 'linear projects' to see all available projects."
+                ),
+            });
+        }
+
+        // If we have exactly one suggestion, suggest it in the error
+        if suggestions.len() == 1 {
+            return Err(LinearError::InvalidInput {
+                message: format!(
+                    "Project '{}' not found. Did you mean '{}'? Use 'linear projects' to see all available projects.",
+                    project, suggestions[0]
+                ),
+            });
+        }
+
+        // Multiple suggestions
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Project '{}' not found. Did you mean one of: {}? Use 'linear projects' to see all available projects.",
+                project, suggestions.join(", ")
+            ),
+        })
+    }
+
+    /// Suggest similar project names for improved UX
+    pub fn suggest_similar_projects(
+        &self,
+        input: &str,
+        projects: &[linear_sdk::Project],
+    ) -> SdkResult<Vec<String>> {
+        let mut suggestions = Vec::new();
+        let input_lower = input.to_lowercase();
+
+        // Look for partial matches in project names
+        for project in projects {
+            if project.name.to_lowercase().contains(&input_lower) {
+                suggestions.push(project.name.clone());
+            }
+        }
+
+        // Limit suggestions to avoid overwhelming the user
+        suggestions.truncate(3);
+
+        Ok(suggestions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use linear_sdk::{LinearClient, Project, ProjectLead};
+    use mockito::{Server, ServerGuard};
+    use secrecy::SecretString;
+    use serde_json::json;
+
+    /// Create a mock Linear server for testing
+    async fn mock_linear_server() -> ServerGuard {
+        Server::new_async().await
+    }
+
+    /// Mock projects response with various test scenarios
+    fn mock_projects_response() -> serde_json::Value {
+        json!({
+            "data": {
+                "projects": {
+                    "nodes": [
+                        {
+                            "id": "proj-123",
+                            "name": "Mobile App",
+                            "description": "iOS and Android mobile application",
+                            "state": "active",
+                            "progress": 0.75,
+                            "url": "https://linear.app/project/proj-123",
+                            "createdAt": "2023-01-01T00:00:00Z",
+                            "updatedAt": "2023-06-01T00:00:00Z",
+                            "lead": {
+                                "id": "lead-456",
+                                "name": "Alice Smith",
+                                "displayName": "Alice Smith"
+                            }
+                        },
+                        {
+                            "id": "proj-456",
+                            "name": "Web App",
+                            "description": "Frontend web application",
+                            "state": "active",
+                            "progress": 0.60,
+                            "url": "https://linear.app/project/proj-456",
+                            "createdAt": "2023-02-01T00:00:00Z",
+                            "updatedAt": "2023-06-01T00:00:00Z",
+                            "lead": {
+                                "id": "lead-789",
+                                "name": "Bob Johnson",
+                                "displayName": "Bob Johnson"
+                            }
+                        },
+                        {
+                            "id": "proj-999",
+                            "name": "Mobile Application",
+                            "description": "Similar name for fuzzy matching test",
+                            "state": "completed",
+                            "progress": 1.0,
+                            "url": "https://linear.app/project/proj-999",
+                            "createdAt": "2023-04-01T00:00:00Z",
+                            "updatedAt": "2023-05-01T00:00:00Z",
+                            "lead": null
+                        }
+                    ]
+                }
+            }
+        })
+    }
+
+    fn mock_empty_projects_response() -> serde_json::Value {
+        json!({
+            "data": {
+                "projects": {
+                    "nodes": []
+                }
+            }
+        })
+    }
+
+    fn mock_projects_error_response() -> serde_json::Value {
+        json!({
+            "errors": [
+                {
+                    "message": "Failed to fetch projects",
+                    "path": ["projects"]
+                }
+            ],
+            "data": null
+        })
+    }
+
+    /// Create a mock project for testing
+    fn create_mock_project(id: &str, name: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: Some("Test project".to_string()),
+            state: "active".to_string(),
+            progress: Some(0.5),
+            url: format!("https://linear.app/project/{id}"),
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+            updated_at: "2023-01-01T00:00:00Z".to_string(),
+            lead: Some(ProjectLead {
+                id: "lead-123".to_string(),
+                name: "John Doe".to_string(),
+                display_name: "John Doe".to_string(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_uuid() {
+        // UUID resolution doesn't require API calls - just create a client without server
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test with a valid UUID format (longer than 20 chars)
+        let uuid = "123e4567-e89b-12d3-a456-426614174000";
+        let result = prompter.resolve_project(uuid).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(uuid.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_name_exact_match() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test exact name match
+        let result = prompter.resolve_project("Mobile App").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("proj-123".to_string()));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_name_case_insensitive() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test case insensitive match
+        let result = prompter.resolve_project("mobile app").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("proj-123".to_string()));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_special_values() {
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test special values that should return None
+        let test_cases = vec!["none", "unassigned", "null", "NONE", "Unassigned"];
+
+        for input in test_cases {
+            let result = prompter.resolve_project(input).await;
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), None, "Failed for input: {input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_not_found_with_suggestions() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test project not found but with similar name (should suggest)
+        let result = prompter.resolve_project("Mobile").await; // Should find "Mobile App" and "Mobile Application"
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        println!("Suggestions error message: {error_msg}");
+        assert!(error_msg.contains("not found"));
+        // Should suggest "Mobile App" due to fuzzy matching
+        assert!(error_msg.contains("Did you mean"));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_empty_list() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_empty_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test with empty project list
+        let result = prompter.resolve_project("Any Project").await;
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        println!("Empty list error message: {error_msg}");
+        assert!(error_msg.contains("No projects found"));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_api_error() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test API error handling
+        let result = prompter.resolve_project("Mobile App").await;
+        assert!(result.is_err());
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_suggest_similar_projects() {
+        let projects = vec![
+            create_mock_project("proj-1", "Mobile App"),
+            create_mock_project("proj-2", "Web App"),
+            create_mock_project("proj-3", "Backend API"),
+            create_mock_project("proj-4", "Mobile Application"),
+        ];
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test fuzzy matching suggestions
+        let suggestions = prompter
+            .suggest_similar_projects("Mobile Ap", &projects)
+            .unwrap();
+
+        // Should suggest both "Mobile App" and "Mobile Application"
+        assert!(!suggestions.is_empty());
+        assert!(suggestions.contains(&"Mobile App".to_string()));
+
+        // Test with no close matches
+        let suggestions = prompter
+            .suggest_similar_projects("Database", &projects)
+            .unwrap();
+        assert!(suggestions.is_empty() || suggestions.len() <= 3); // Should limit suggestions
     }
 }

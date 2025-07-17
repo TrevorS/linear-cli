@@ -170,7 +170,7 @@ fn download_schema(api_key: Option<String>) -> Result<()> {
 
     fs::write(&output_path, formatted_schema).context("Failed to write schema file")?;
 
-    println!("Schema downloaded successfully to {:?}", output_path);
+    println!("Schema downloaded successfully to {output_path:?}");
     Ok(())
 }
 

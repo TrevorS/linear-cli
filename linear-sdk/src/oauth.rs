@@ -112,10 +112,7 @@ impl OAuthManager {
         open::that(auth_url.as_str()).map_err(|_| auth_error("Failed to open browser"))?;
 
         println!("Opening browser for authentication...");
-        println!(
-            "Waiting for callback on http://localhost:{}{}",
-            REDIRECT_PORT, REDIRECT_PATH
-        );
+        println!("Waiting for callback on http://localhost:{REDIRECT_PORT}{REDIRECT_PATH}");
 
         // Step 3: listen for callback
         let server = Server::http(("127.0.0.1", REDIRECT_PORT))
@@ -132,7 +129,7 @@ impl OAuthManager {
 
             if request_url.starts_with(REDIRECT_PATH) {
                 // Parse query ?code=…&state=…
-                let url = format!("http://localhost:{}{}", REDIRECT_PORT, request_url);
+                let url = format!("http://localhost:{REDIRECT_PORT}{request_url}");
                 let params: Url = url.parse().map_err(|_| auth_error("Invalid URL format"))?;
 
                 let code = params
