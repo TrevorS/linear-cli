@@ -1,6 +1,7 @@
 // ABOUTME: End-to-end integration tests for config, aliases, and completions features
 // ABOUTME: Tests the complete workflow from config loading through alias expansion to command execution
 
+use clap::Parser;
 use linear_cli::aliases::AliasExpander;
 use linear_cli::completions::{CompletionGenerator, Shell};
 use linear_cli::config::Config;
@@ -299,4 +300,138 @@ fn test_empty_config_handling() {
 
     assert!(config.aliases.is_some());
     assert!(config.default_team.is_none());
+}
+
+#[test]
+fn test_project_argument_parsing() {
+    // Import the actual CLI struct
+    use linear_cli::{Cli, Commands};
+
+    // Test create command with --project flag
+    let cli = Cli::try_parse_from([
+        "linear",
+        "create",
+        "--title",
+        "Test Issue",
+        "--team",
+        "ENG",
+        "--project",
+        "Mobile App",
+    ])
+    .unwrap();
+
+    match cli.command {
+        Commands::Create {
+            project,
+            project_id,
+            title,
+            team,
+            ..
+        } => {
+            assert_eq!(project, Some("Mobile App".to_string()));
+            assert_eq!(project_id, None);
+            assert_eq!(title, Some("Test Issue".to_string()));
+            assert_eq!(team, Some("ENG".to_string()));
+        }
+        _ => panic!("Expected Create command"),
+    }
+
+    // Test create command with --project-id flag
+    let cli = Cli::try_parse_from([
+        "linear",
+        "create",
+        "--title",
+        "Test Issue",
+        "--team",
+        "ENG",
+        "--project-id",
+        "proj-123",
+    ])
+    .unwrap();
+
+    match cli.command {
+        Commands::Create {
+            project,
+            project_id,
+            title,
+            team,
+            ..
+        } => {
+            assert_eq!(project, None);
+            assert_eq!(project_id, Some("proj-123".to_string()));
+            assert_eq!(title, Some("Test Issue".to_string()));
+            assert_eq!(team, Some("ENG".to_string()));
+        }
+        _ => panic!("Expected Create command"),
+    }
+}
+
+#[test]
+fn test_project_argument_conflicts() {
+    use linear_cli::Cli;
+
+    // Test that --project and --project-id are mutually exclusive
+    let result = Cli::try_parse_from([
+        "linear",
+        "create",
+        "--title",
+        "Test Issue",
+        "--team",
+        "ENG",
+        "--project",
+        "Mobile App",
+        "--project-id",
+        "proj-123",
+    ]);
+
+    assert!(
+        result.is_err(),
+        "Should reject conflicting project arguments"
+    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("conflict") || error_msg.contains("cannot be used"),
+        "Error should mention argument conflict: {error_msg}"
+    );
+}
+
+#[test]
+fn test_update_command_project_arguments() {
+    use linear_cli::{Cli, Commands};
+
+    // Test update command with --project flag
+    let cli =
+        Cli::try_parse_from(["linear", "update", "ISSUE-123", "--project", "Backend API"]).unwrap();
+
+    match cli.command {
+        Commands::Update {
+            id,
+            project,
+            project_id,
+            ..
+        } => {
+            assert_eq!(id, "ISSUE-123");
+            assert_eq!(project, Some("Backend API".to_string()));
+            assert_eq!(project_id, None);
+        }
+        _ => panic!("Expected Update command"),
+    }
+
+    // Test update command with --project-id flag
+    let cli =
+        Cli::try_parse_from(["linear", "update", "ISSUE-456", "--project-id", "proj-789"]).unwrap();
+
+    match cli.command {
+        Commands::Update {
+            id,
+            project,
+            project_id,
+            ..
+        } => {
+            assert_eq!(id, "ISSUE-456");
+            assert_eq!(project, None);
+            assert_eq!(project_id, Some("proj-789".to_string()));
+        }
+        _ => panic!("Expected Update command"),
+    }
 }

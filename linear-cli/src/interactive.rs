@@ -1087,15 +1087,93 @@ impl<'a> InteractivePrompter<'a> {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
-    // Note: These tests are placeholder implementations that need proper mocking
-    // Temporarily commented out to avoid compilation errors
-    // TODO: Implement proper mocking for LinearClient and complete these tests
-
     use super::*;
-    use linear_sdk::{Project, ProjectLead};
+    use linear_sdk::{LinearClient, Project, ProjectLead};
+    use mockito::{Server, ServerGuard};
+    use secrecy::SecretString;
+    use serde_json::json;
+
+    /// Create a mock Linear server for testing
+    async fn mock_linear_server() -> ServerGuard {
+        Server::new_async().await
+    }
+
+    /// Mock projects response with various test scenarios
+    fn mock_projects_response() -> serde_json::Value {
+        json!({
+            "data": {
+                "projects": {
+                    "nodes": [
+                        {
+                            "id": "proj-123",
+                            "name": "Mobile App",
+                            "description": "iOS and Android mobile application",
+                            "state": "active",
+                            "progress": 0.75,
+                            "url": "https://linear.app/project/proj-123",
+                            "createdAt": "2023-01-01T00:00:00Z",
+                            "updatedAt": "2023-06-01T00:00:00Z",
+                            "lead": {
+                                "id": "lead-456",
+                                "name": "Alice Smith",
+                                "displayName": "Alice Smith"
+                            }
+                        },
+                        {
+                            "id": "proj-456",
+                            "name": "Web App",
+                            "description": "Frontend web application",
+                            "state": "active",
+                            "progress": 0.60,
+                            "url": "https://linear.app/project/proj-456",
+                            "createdAt": "2023-02-01T00:00:00Z",
+                            "updatedAt": "2023-06-01T00:00:00Z",
+                            "lead": {
+                                "id": "lead-789",
+                                "name": "Bob Johnson",
+                                "displayName": "Bob Johnson"
+                            }
+                        },
+                        {
+                            "id": "proj-999",
+                            "name": "Mobile Application",
+                            "description": "Similar name for fuzzy matching test",
+                            "state": "completed",
+                            "progress": 1.0,
+                            "url": "https://linear.app/project/proj-999",
+                            "createdAt": "2023-04-01T00:00:00Z",
+                            "updatedAt": "2023-05-01T00:00:00Z",
+                            "lead": null
+                        }
+                    ]
+                }
+            }
+        })
+    }
+
+    fn mock_empty_projects_response() -> serde_json::Value {
+        json!({
+            "data": {
+                "projects": {
+                    "nodes": []
+                }
+            }
+        })
+    }
+
+    fn mock_projects_error_response() -> serde_json::Value {
+        json!({
+            "errors": [
+                {
+                    "message": "Failed to fetch projects",
+                    "path": ["projects"]
+                }
+            ],
+            "data": null
+        })
+    }
 
     /// Create a mock project for testing
     fn create_mock_project(id: &str, name: &str) -> Project {
@@ -1105,7 +1183,7 @@ mod tests {
             description: Some("Test project".to_string()),
             state: "active".to_string(),
             progress: Some(0.5),
-            url: format!("https://linear.app/project/{}", id),
+            url: format!("https://linear.app/project/{id}"),
             created_at: "2023-01-01T00:00:00Z".to_string(),
             updated_at: "2023-01-01T00:00:00Z".to_string(),
             lead: Some(ProjectLead {
@@ -1116,6 +1194,223 @@ mod tests {
         }
     }
 
-    // Test implementations would go here once proper mocking is set up
+    #[tokio::test]
+    async fn test_resolve_project_with_uuid() {
+        // UUID resolution doesn't require API calls - just create a client without server
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test with a valid UUID format (longer than 20 chars)
+        let uuid = "123e4567-e89b-12d3-a456-426614174000";
+        let result = prompter.resolve_project(uuid).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(uuid.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_name_exact_match() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test exact name match
+        let result = prompter.resolve_project("Mobile App").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("proj-123".to_string()));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_name_case_insensitive() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test case insensitive match
+        let result = prompter.resolve_project("mobile app").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some("proj-123".to_string()));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_with_special_values() {
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test special values that should return None
+        let test_cases = vec!["none", "unassigned", "null", "NONE", "Unassigned"];
+
+        for input in test_cases {
+            let result = prompter.resolve_project(input).await;
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), None, "Failed for input: {input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_not_found_with_suggestions() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test project not found but with similar name (should suggest)
+        let result = prompter.resolve_project("Mobile").await; // Should find "Mobile App" and "Mobile Application"
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        println!("Suggestions error message: {error_msg}");
+        assert!(error_msg.contains("not found"));
+        // Should suggest "Mobile App" due to fuzzy matching
+        assert!(error_msg.contains("Did you mean"));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_empty_list() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_empty_projects_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test with empty project list
+        let result = prompter.resolve_project("Any Project").await;
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        println!("Empty list error message: {error_msg}");
+        assert!(error_msg.contains("No projects found"));
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_api_error() {
+        let mut server = mock_linear_server().await;
+        let mock = server
+            .mock("POST", "/graphql")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "operationName": "ListProjects"
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_projects_error_response().to_string())
+            .create();
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .base_url(Some(server.url()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test API error handling
+        let result = prompter.resolve_project("Mobile App").await;
+        assert!(result.is_err());
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_suggest_similar_projects() {
+        let projects = vec![
+            create_mock_project("proj-1", "Mobile App"),
+            create_mock_project("proj-2", "Web App"),
+            create_mock_project("proj-3", "Backend API"),
+            create_mock_project("proj-4", "Mobile Application"),
+        ];
+
+        let client = LinearClient::builder()
+            .auth_token(SecretString::new("test-token".to_string().into_boxed_str()))
+            .build()
+            .expect("Failed to create client");
+
+        let prompter = InteractivePrompter::new(&client).expect("Failed to create prompter");
+
+        // Test fuzzy matching suggestions
+        let suggestions = prompter
+            .suggest_similar_projects("Mobile Ap", &projects)
+            .unwrap();
+
+        // Should suggest both "Mobile App" and "Mobile Application"
+        assert!(!suggestions.is_empty());
+        assert!(suggestions.contains(&"Mobile App".to_string()));
+
+        // Test with no close matches
+        let suggestions = prompter
+            .suggest_similar_projects("Database", &projects)
+            .unwrap();
+        assert!(suggestions.is_empty() || suggestions.len() <= 3); // Should limit suggestions
+    }
 }
-*/
