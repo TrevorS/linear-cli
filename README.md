@@ -1,14 +1,34 @@
 # Linear CLI
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.88.0+-blue.svg)](https://www.rust-lang.org)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/TrevorS/linear-cli)
+
 > Fast, scriptable Linear issue management from your terminal
 
 A command-line interface for [Linear](https://linear.app) that lets you manage issues, projects, and teams without leaving your terminal. Built in Rust for speed and reliability.
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Authentication](#authentication)
+- [Features](#features)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Shell Completions](#shell-completions)
+- [Scripting and Integration](#scripting-and-integration)
+- [Development](#development)
+- [Performance](#performance)
+- [License](#license)
+
 ## Quick Start
 
 ```bash
-# Install
-cargo install linear-cli
+# Install with image support (recommended)
+git clone https://github.com/TrevorS/linear-cli.git
+cd linear-cli
+make install-images
 
 # Authenticate
 linear login
@@ -19,10 +39,17 @@ linear issues --assignee me
 
 ## Installation
 
-### Cargo
+### From Source
 
 ```bash
-cargo install linear-cli
+git clone https://github.com/TrevorS/linear-cli.git
+cd linear-cli
+
+# Install with image support (recommended)
+make install-images
+
+# Or install without image support
+make install
 ```
 
 ### GitHub Releases
@@ -33,11 +60,13 @@ Download pre-built binaries from [releases](https://github.com/TrevorS/linear-cl
 - **macOS**: `linear-cli-x86_64-apple-darwin.tar.gz` (Intel) / `linear-cli-aarch64-apple-darwin.tar.gz` (Apple Silicon)
 - **Windows**: `linear-cli-x86_64-pc-windows-msvc.zip`
 
-### From Source
-
 ```bash
+# Install with image support (recommended)
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
+make install-images
+
+# Or install without image support
 make install
 ```
 
@@ -72,6 +101,7 @@ LINEAR_API_KEY=lin_api_xxxxx
 - **Multiple Output Formats**: Formatted tables, JSON, or YAML
 - **Configuration System**: TOML configs with aliases and XDG compliance
 - **Shell Integration**: Completions for bash, zsh, fish, and PowerShell
+- **Inline Images**: Display images from issues directly in compatible terminals (Kitty, Ghostty, WezTerm)
 - **Cross-Platform**: Linux, macOS, and Windows support
 
 ## Usage
@@ -99,6 +129,9 @@ linear issues --assignee me --status todo --team ENG
 
 # JSON output for scripting
 linear issues --json | jq '.[] | select(.priority == 1)'
+
+# Pretty printed JSON
+linear issues --json --pretty
 ```
 
 ### View Issue Details
@@ -107,6 +140,10 @@ linear issues --json | jq '.[] | select(.priority == 1)'
 linear issue ENG-123              # Full details with description
 linear issue ENG-123 --json       # JSON output
 linear issue ENG-123 --raw        # Plain markdown
+
+# Image display options (compatible terminals)
+linear issue ENG-123 --force-images  # Force display images
+linear issue ENG-123 --no-images     # Disable image display
 ```
 
 ### Create Issues
@@ -120,14 +157,16 @@ linear create \
   --title "Fix authentication timeout" \
   --team ENG \
   --assignee me \
-  --priority 1 \
-  --labels bug,auth
+  --priority 1
 
 # From markdown file
 linear create --from-file issue.md
 
 # Dry run (preview without creating)
 linear create --title "Test issue" --team ENG --dry-run
+
+# Open created issue in browser
+linear create --title "Test issue" --team ENG --open
 ```
 
 #### Creating from Markdown Files
@@ -139,7 +178,6 @@ title: "Fix authentication race condition"
 team: ENG
 assignee: me
 priority: 1
-labels: [bug, auth, urgent]
 ---
 
 # Problem
