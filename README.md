@@ -25,10 +25,10 @@ A command-line interface for [Linear](https://linear.app) that lets you manage i
 ## Quick Start
 
 ```bash
-# Install from source
+# Install with image support (recommended)
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
-make install
+make install-images
 
 # Authenticate
 linear login
@@ -39,19 +39,17 @@ linear issues --assignee me
 
 ## Installation
 
-### From Source (Recommended)
+### From Source
 
 ```bash
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
+
+# Install with image support (recommended)
+make install-images
+
+# Or install without image support
 make install
-```
-
-### Cargo (Future)
-
-```bash
-# Note: Package not yet published to crates.io
-# cargo install linear-cli
 ```
 
 ### GitHub Releases
@@ -62,11 +60,13 @@ Download pre-built binaries from [releases](https://github.com/TrevorS/linear-cl
 - **macOS**: `linear-cli-x86_64-apple-darwin.tar.gz` (Intel) / `linear-cli-aarch64-apple-darwin.tar.gz` (Apple Silicon)
 - **Windows**: `linear-cli-x86_64-pc-windows-msvc.zip`
 
-### From Source
-
 ```bash
+# Install with image support (recommended)
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
+make install-images
+
+# Or install without image support
 make install
 ```
 
