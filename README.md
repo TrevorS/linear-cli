@@ -1,5 +1,13 @@
 # Linear CLI
 
+```text
+    __    _                       ________    ____
+   / /   (_)___  ___  ____  _____/ ____/ /   /  _/
+  / /   / / __ \/ _ \/ __ `/ ___/ /   / /    / /
+ / /___/ / / / /  __/ /_/ / /  / /___/ /____/ /
+/_____/_/_/ /_/\___/\__,_/_/   \____/_____/___/
+```
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88.0+-blue.svg)](https://www.rust-lang.org)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/TrevorS/linear-cli)
@@ -52,27 +60,9 @@ make install-images
 make install
 ```
 
-### GitHub Releases
-
-Download pre-built binaries from [releases](https://github.com/TrevorS/linear-cli/releases):
-
-- **Linux**: `linear-cli-x86_64-unknown-linux-musl.tar.gz`
-- **macOS**: `linear-cli-x86_64-apple-darwin.tar.gz` (Intel) / `linear-cli-aarch64-apple-darwin.tar.gz` (Apple Silicon)
-- **Windows**: `linear-cli-x86_64-pc-windows-msvc.zip`
-
-```bash
-# Install with image support (recommended)
-git clone https://github.com/TrevorS/linear-cli.git
-cd linear-cli
-make install-images
-
-# Or install without image support
-make install
-```
-
 ## Authentication
 
-### OAuth (Recommended)
+### OAuth
 
 ```bash
 linear login   # Interactive browser-based authentication
@@ -356,17 +346,6 @@ linear-cli/
 
 See [CLAUDE.md](./CLAUDE.md) for detailed development documentation.
 
-## Performance
-
-- **Fast startup**: < 50ms typical cold start
-- **Efficient API usage**: Batched requests and intelligent caching
-- **Small binaries**: < 10MB statically linked
-- **Low memory usage**: Rust's zero-cost abstractions
-
 ## License
 
 MIT
-
----
-
-*Linear CLI is an unofficial tool. Linear® is a trademark of Linear Orbit, Inc.*
