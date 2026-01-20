@@ -147,7 +147,7 @@ impl ConfigAliases {
         // Check for recursive aliases
         for (alias_name, command_args) in &self.commands {
             if command_args.first() == Some(alias_name) {
-                return Err(anyhow!("Recursive alias detected: {}", alias_name));
+                return Err(anyhow!("Recursive alias detected: {alias_name}"));
             }
         }
 

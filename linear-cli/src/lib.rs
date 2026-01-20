@@ -17,6 +17,3 @@ pub mod types;
 
 // Re-export CLI types for testing
 pub use crate::cli::{Cli, Commands};
-
-#[cfg(feature = "inline-images")]
-pub mod image_protocols;

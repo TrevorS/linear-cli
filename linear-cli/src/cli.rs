@@ -64,16 +64,6 @@ pub enum Commands {
         /// Force raw markdown output (skip rich formatting)
         #[arg(long)]
         raw: bool,
-
-        /// Disable inline image display (requires inline-images feature)
-        #[cfg(feature = "inline-images")]
-        #[arg(long)]
-        no_images: bool,
-
-        /// Force inline image display even in unsupported terminals (requires inline-images feature)
-        #[cfg(feature = "inline-images")]
-        #[arg(long, conflicts_with = "no_images")]
-        force_images: bool,
     },
     /// Create a new issue
     Create {
@@ -287,33 +277,10 @@ pub enum Commands {
         #[arg(long)]
         include_archived: bool,
     },
-    /// Manage image cache and diagnostics (requires inline-images feature)
-    #[cfg(feature = "inline-images")]
-    Images {
-        #[command(subcommand)]
-        action: ImageAction,
-    },
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
         shell: crate::completions::Shell,
     },
-}
-
-#[cfg(feature = "inline-images")]
-#[derive(Subcommand, Debug)]
-pub enum ImageAction {
-    /// Clear the image cache
-    Clear,
-    /// Show cache statistics and information
-    Stats,
-    /// Test image protocol support for current terminal
-    Test {
-        /// Test URL to use (optional, uses a small test image if not provided)
-        #[arg(long)]
-        url: Option<String>,
-    },
-    /// Show detailed diagnostics about image capabilities
-    Diagnostics,
 }

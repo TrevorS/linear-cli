@@ -88,7 +88,7 @@ pub fn parse_markdown_content(content: &str) -> Result<MarkdownFile> {
 
     // Parse YAML frontmatter
     let frontmatter: IssueFrontmatter = serde_yaml::from_str(frontmatter_yaml)
-        .map_err(|e| anyhow!("Failed to parse frontmatter YAML: {}", e))?;
+        .map_err(|e| anyhow!("Failed to parse frontmatter YAML: {e}"))?;
 
     // Validate required fields
     if frontmatter.title.trim().is_empty() {
@@ -99,8 +99,7 @@ pub fn parse_markdown_content(content: &str) -> Result<MarkdownFile> {
     if let Some(priority) = frontmatter.priority {
         if !(1..=4).contains(&priority) {
             return Err(anyhow!(
-                "Priority must be between 1 and 4 (1=Urgent, 2=High, 3=Normal, 4=Low), got: {}",
-                priority
+                "Priority must be between 1 and 4 (1=Urgent, 2=High, 3=Normal, 4=Low), got: {priority}"
             ));
         }
     }

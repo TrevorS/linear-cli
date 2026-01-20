@@ -47,8 +47,7 @@ impl FromStr for Shell {
             "fish" => Ok(Shell::Fish),
             "powershell" | "pwsh" => Ok(Shell::PowerShell),
             _ => Err(anyhow!(
-                "Unsupported shell: {}. Supported shells: bash, zsh, fish, powershell",
-                s
+                "Unsupported shell: {s}. Supported shells: bash, zsh, fish, powershell"
             )),
         }
     }

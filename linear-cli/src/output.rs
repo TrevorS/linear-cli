@@ -16,14 +16,8 @@ use tabled::{Table, Tabled};
 use crate::constants;
 use crate::types::IssueStatus;
 
-#[cfg(feature = "inline-images")]
-use crate::image_protocols::{ImageManager, ImageRenderResult};
-
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
-
-#[cfg(feature = "inline-images")]
-static IMAGE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
 fn get_syntax_set() -> &'static SyntaxSet {
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
@@ -31,13 +25,6 @@ fn get_syntax_set() -> &'static SyntaxSet {
 
 fn get_theme_set() -> &'static ThemeSet {
     THEME_SET.get_or_init(ThemeSet::load_defaults)
-}
-
-#[cfg(feature = "inline-images")]
-fn get_image_regex() -> &'static regex::Regex {
-    IMAGE_REGEX.get_or_init(|| {
-        regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("Valid regex pattern")
-    })
 }
 
 pub trait OutputFormat {
@@ -491,121 +478,6 @@ impl TableFormatter {
         }
 
         Ok(output)
-    }
-
-    #[cfg(feature = "inline-images")]
-    pub async fn format_detailed_issue_with_image_manager_async(
-        &self,
-        issue: &DetailedIssue,
-        is_interactive: bool,
-        image_manager: &ImageManager,
-    ) -> Result<String> {
-        log::debug!("Processing issue with image manager...");
-
-        // Process images BEFORE markdown rendering to avoid conflicts
-        let mut processed_issue = issue.clone();
-
-        if let Some(description) = &issue.description {
-            log::debug!("Found description, processing for images...");
-            log::debug!("Description contains {} characters", description.len());
-            log::debug!(
-                "Description preview: {}",
-                &description[..std::cmp::min(100, description.len())]
-            );
-
-            // Process markdown images asynchronously BEFORE rendering
-            let processed_description = self
-                .process_markdown_images(description, image_manager)
-                .await?;
-
-            log::debug!(
-                "Processed description contains {} characters",
-                processed_description.len()
-            );
-            log::debug!(
-                "Original != Processed: {}",
-                processed_description != *description
-            );
-
-            // Update the issue with processed description if it was modified
-            if processed_description != *description {
-                processed_issue.description = Some(processed_description);
-
-                log::debug!("Updated issue description with processed images");
-            }
-        } else {
-            log::debug!("No description found in issue");
-        }
-
-        // Now render the issue with processed description
-        let output = self.format_detailed_issue_rich(&processed_issue, is_interactive)?;
-
-        Ok(output)
-    }
-
-    #[cfg(feature = "inline-images")]
-    async fn process_markdown_images(
-        &self,
-        markdown: &str,
-        image_manager: &ImageManager,
-    ) -> Result<String> {
-        log::debug!("Processing markdown for images...");
-
-        // Find and replace image patterns in the raw markdown
-        let mut result = markdown.to_string();
-        let mut image_count = 0;
-
-        // Use lazy-loaded regex to find image patterns
-        let image_regex = get_image_regex();
-        let mut images_to_process = Vec::new();
-
-        for captures in image_regex.captures_iter(markdown) {
-            let full_match = captures.get(0).map_or("", |m| m.as_str());
-            let alt_text = captures.get(1).map_or("", |m| m.as_str());
-            let url = captures.get(2).map_or("", |m| m.as_str());
-            image_count += 1;
-
-            log::debug!("Found image #{}: {} (alt: {})", image_count, url, alt_text);
-            log::debug!("Full pattern: {}", full_match);
-            log::debug!("Can process URL: {}", image_manager.can_process_url(url));
-
-            if image_manager.can_process_url(url) {
-                images_to_process.push((
-                    url.to_string(),
-                    alt_text.to_string(),
-                    full_match.to_string(),
-                ));
-            }
-        }
-
-        // Process each image and replace in the raw markdown
-        for (url, alt_text, original_pattern) in images_to_process {
-            match image_manager.process_image(&url, &alt_text).await {
-                ImageRenderResult::Rendered(escape_sequence) => {
-                    log::debug!(
-                        "Image rendered successfully: {} chars",
-                        escape_sequence.len()
-                    );
-
-                    // Replace the markdown pattern with raw escape sequence
-                    // The markdown renderer will output this as-is
-                    result = result.replace(&original_pattern, &escape_sequence);
-
-                    log::debug!("Replaced markdown pattern with Kitty sequence");
-                }
-                ImageRenderResult::Fallback(fallback) => {
-                    log::debug!("Image fallback: {}", fallback);
-                    // Replace with fallback text
-                    result = result.replace(&original_pattern, &fallback);
-                }
-                ImageRenderResult::Disabled => {
-                    log::debug!("Image manager disabled");
-                    // Keep original markdown
-                }
-            }
-        }
-
-        Ok(result)
     }
 }
 

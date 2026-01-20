@@ -33,8 +33,7 @@ impl AliasExpander {
         loop {
             if depth >= MAX_EXPANSION_DEPTH {
                 return Err(anyhow!(
-                    "Maximum alias expansion depth exceeded ({})",
-                    MAX_EXPANSION_DEPTH
+                    "Maximum alias expansion depth exceeded ({MAX_EXPANSION_DEPTH})"
                 ));
             }
 
@@ -44,7 +43,7 @@ impl AliasExpander {
             if let Some(alias_args) = self.aliases.expand(command) {
                 // Check for recursion
                 if expansion_history.contains(command) {
-                    return Err(anyhow!("Recursive alias detected: {}", command));
+                    return Err(anyhow!("Recursive alias detected: {command}"));
                 }
 
                 expansion_history.insert(command.clone());

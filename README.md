@@ -33,10 +33,9 @@ A command-line interface for [Linear](https://linear.app) that lets you manage i
 ## Quick Start
 
 ```bash
-# Install with image support (recommended)
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
-make install-images
+make install
 
 # Authenticate
 linear login
@@ -52,11 +51,6 @@ linear issues --assignee me
 ```bash
 git clone https://github.com/TrevorS/linear-cli.git
 cd linear-cli
-
-# Install with image support (recommended)
-make install-images
-
-# Or install without image support
 make install
 ```
 
@@ -91,7 +85,6 @@ LINEAR_API_KEY=lin_api_xxxxx
 - **Multiple Output Formats**: Formatted tables, JSON, or YAML
 - **Configuration System**: TOML configs with aliases and XDG compliance
 - **Shell Integration**: Completions for bash, zsh, fish, and PowerShell
-- **Inline Images**: Display images from issues directly in compatible terminals (Kitty, Ghostty, WezTerm)
 - **Cross-Platform**: Linux, macOS, and Windows support
 
 ## Usage
@@ -130,10 +123,6 @@ linear issues --json --pretty
 linear issue ENG-123              # Full details with description
 linear issue ENG-123 --json       # JSON output
 linear issue ENG-123 --raw        # Plain markdown
-
-# Image display options (compatible terminals)
-linear issue ENG-123 --force-images  # Force display images
-linear issue ENG-123 --no-images     # Disable image display
 ```
 
 ### Create Issues

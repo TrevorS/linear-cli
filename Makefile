@@ -1,7 +1,7 @@
 # ABOUTME: Makefile for common development commands and workflow automation
 # ABOUTME: Provides shortcuts for testing, formatting, linting, and building
 
-.PHONY: test test-snapshots test-debug fmt lint build build-images release clean install install-images help run run-debug run-piped run-images debug-deps check dev-setup dev all
+.PHONY: test test-snapshots test-debug fmt lint build release clean install help run run-debug run-piped debug-deps check dev-setup dev all
 
 # Default target
 help:
@@ -17,17 +17,14 @@ help:
 	@echo "  make lint           - Run clippy linter"
 	@echo "  make check          - Run fmt and lint checks (CI-style)"
 	@echo "  make build          - Build debug version"
-	@echo "  make build-images   - Build debug version with inline-images feature"
 	@echo "  make release        - Build release version"
 	@echo "  make install        - Install binary locally"
-	@echo "  make install-images - Install binary locally with inline-images support"
 	@echo "  make clean          - Clean build artifacts"
 	@echo ""
 	@echo "Running:"
 	@echo "  make run            - Run CLI with example issues command"
 	@echo "  make run-debug      - Run CLI with debug logging"
 	@echo "  make run-piped      - Test CLI output when piped (no colors/TTY)"
-	@echo "  make run-images     - Run CLI with inline-images feature enabled"
 	@echo ""
 	@echo "Setup & Debugging:"
 	@echo "  make dev-setup      - Setup development environment"
@@ -118,16 +115,3 @@ debug-deps:
 	@echo ""
 	@echo "Checking for security advisories..."
 	@cargo audit 2>/dev/null || echo "cargo-audit not installed. Install with: cargo install cargo-audit"
-
-# Build with inline-images feature enabled
-build-images:
-	cargo build --workspace --features inline-images
-
-# Install binary locally with inline-images support
-install-images:
-	cargo install --path linear-cli --features inline-images
-
-# Run CLI with inline-images feature enabled
-run-images:
-	@echo "Running linear CLI with inline-images feature..."
-	cargo run -p linear-cli --features inline-images -- issues --limit 5

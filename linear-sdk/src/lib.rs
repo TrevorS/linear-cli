@@ -514,10 +514,8 @@ pub struct TeamMember {
 pub struct LinearClient {
     pub(crate) client: reqwest::Client,
     pub(crate) base_url: String,
-    _auth_token: String,
     pub(crate) verbose: bool,
     pub(crate) retry_config: retry::RetryConfig,
-    _max_retries: usize,
 }
 
 pub struct IssueFilters {
@@ -562,10 +560,8 @@ impl LinearClient {
             base_url: config
                 .base_url
                 .unwrap_or_else(|| urls::LINEAR_API_BASE.to_string()),
-            _auth_token: auth_token.to_string(),
             verbose: config.verbose,
             retry_config,
-            _max_retries: config.max_retries,
         })
     }
 
