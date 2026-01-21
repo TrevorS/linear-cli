@@ -530,6 +530,109 @@ struct TableRow {
     assignee: String,
 }
 
+impl TableFormatter {
+    /// Core implementation for formatting detailed issues.
+    /// When `render_markdown` is true, descriptions are rendered as terminal markdown.
+    fn format_detailed_issue_impl(
+        &self,
+        issue: &DetailedIssue,
+        render_markdown: bool,
+    ) -> Result<String> {
+        let border_line = "─".repeat(constants::ui::BORDER_LINE_LENGTH);
+        let title_line = if self.use_color {
+            format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
+        } else {
+            format!("{}: {}", issue.identifier, issue.title)
+        };
+
+        let mut output = vec![
+            border_line.clone(),
+            title_line,
+            border_line,
+            format!("Status:     {}", self.format_status(&issue.state.name)),
+            format!(
+                "Assignee:   {}",
+                self.format_detailed_assignee(&issue.assignee)
+            ),
+            format!("Team:       {}", self.format_team(&issue.team)),
+        ];
+
+        if let Some(project) = &issue.project {
+            output.push(format!("Project:    {}", project.name));
+        }
+
+        output.push(format!(
+            "Priority:   {}",
+            self.format_priority(issue.priority, &issue.priority_label)
+        ));
+
+        if let Some(description) = &issue.description {
+            output.push(String::new());
+            if self.use_color {
+                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
+            } else {
+                output.push("📝 Description:".to_string());
+            }
+
+            if render_markdown {
+                // Render markdown to terminal, falling back to raw on error
+                match self.render_markdown_to_terminal(description) {
+                    Ok(rendered) => output.push(rendered),
+                    Err(_) => output.push(description.clone()),
+                }
+            } else {
+                output.push(description.clone());
+            }
+        }
+
+        // Metadata section
+        output.push(String::new());
+        if self.use_color {
+            output.push(format!(
+                "{}{}{}",
+                "🏷️ ".white(),
+                "Labels: ".cyan(),
+                self.format_labels(&issue.labels)
+            ));
+        } else {
+            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
+        }
+
+        output.push(String::new());
+        if self.use_color {
+            output.push(format!(
+                "{}{} {}    {} {}",
+                "📅 ".white(),
+                "Created:".cyan(),
+                self.format_datetime(&issue.created_at).white(),
+                "Updated:".cyan(),
+                self.format_datetime(&issue.updated_at).white()
+            ));
+        } else {
+            output.push(format!(
+                "📅 Created: {}    Updated: {}",
+                self.format_datetime(&issue.created_at),
+                self.format_datetime(&issue.updated_at)
+            ));
+        }
+
+        output.push(String::new());
+        let supports_osc8 = Self::supports_osc8();
+        if self.use_color {
+            output.push(format!(
+                "{}{}\n   {}",
+                "🔗 ".white(),
+                "View in Linear:".cyan(),
+                self.format_hyperlink(&issue.url, &issue.url, supports_osc8)
+            ));
+        } else {
+            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
+        }
+
+        Ok(output.join("\n"))
+    }
+}
+
 impl OutputFormat for TableFormatter {
     fn format_issues(&self, issues: &[Issue]) -> Result<String> {
         let rows: Vec<TableRow> = issues
@@ -553,89 +656,7 @@ impl OutputFormat for TableFormatter {
     }
 
     fn format_detailed_issue(&self, issue: &DetailedIssue) -> Result<String> {
-        let border_line = "─".repeat(constants::ui::BORDER_LINE_LENGTH);
-        let title_line = if self.use_color {
-            format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
-        } else {
-            format!("{}: {}", issue.identifier, issue.title)
-        };
-
-        let mut output = vec![
-            border_line.clone(),
-            title_line,
-            border_line,
-            format!("Status:     {}", self.format_status(&issue.state.name)),
-            format!(
-                "Assignee:   {}",
-                self.format_detailed_assignee(&issue.assignee)
-            ),
-            format!("Team:       {}", self.format_team(&issue.team)),
-        ];
-
-        if let Some(project) = &issue.project {
-            output.push(format!("Project:    {}", project.name));
-        }
-
-        output.push(format!(
-            "Priority:   {}",
-            self.format_priority(issue.priority, &issue.priority_label)
-        ));
-
-        if let Some(description) = &issue.description {
-            output.push(String::new());
-            if self.use_color {
-                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
-            } else {
-                output.push("📝 Description:".to_string());
-            }
-            output.push(description.clone());
-        }
-
-        // Metadata section with enhanced formatting
-        output.push(String::new());
-        if self.use_color {
-            output.push(format!(
-                "{}{}{}",
-                "🏷️ ".white(),
-                "Labels: ".cyan(),
-                self.format_labels(&issue.labels)
-            ));
-        } else {
-            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
-        }
-
-        output.push(String::new());
-        if self.use_color {
-            output.push(format!(
-                "{}{} {}    {} {}",
-                "📅 ".white(),
-                "Created:".cyan(),
-                self.format_datetime(&issue.created_at).white(),
-                "Updated:".cyan(),
-                self.format_datetime(&issue.updated_at).white()
-            ));
-        } else {
-            output.push(format!(
-                "📅 Created: {}    Updated: {}",
-                self.format_datetime(&issue.created_at),
-                self.format_datetime(&issue.updated_at)
-            ));
-        }
-
-        output.push(String::new());
-        let supports_osc8 = Self::supports_osc8();
-        if self.use_color {
-            output.push(format!(
-                "{}{}\n   {}",
-                "🔗 ".white(),
-                "View in Linear:".cyan(),
-                self.format_hyperlink(&issue.url, &issue.url, supports_osc8)
-            ));
-        } else {
-            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
-        }
-
-        Ok(output.join("\n"))
+        self.format_detailed_issue_impl(issue, false)
     }
 
     fn format_detailed_issue_rich(
@@ -643,104 +664,8 @@ impl OutputFormat for TableFormatter {
         issue: &DetailedIssue,
         is_interactive: bool,
     ) -> Result<String> {
-        // If not interactive (piped/redirected), use raw markdown
-        if !is_interactive {
-            return self.format_detailed_issue(issue);
-        }
-
-        // For interactive terminals, render markdown if present in description
-        let border_line = "─".repeat(constants::ui::BORDER_LINE_LENGTH);
-        let title_line = if self.use_color {
-            format!("{}: {}", issue.identifier.bold().blue(), issue.title.bold())
-        } else {
-            format!("{}: {}", issue.identifier, issue.title)
-        };
-
-        let mut output = vec![
-            border_line.clone(),
-            title_line,
-            border_line,
-            format!("Status:     {}", self.format_status(&issue.state.name)),
-            format!(
-                "Assignee:   {}",
-                self.format_detailed_assignee(&issue.assignee)
-            ),
-            format!("Team:       {}", self.format_team(&issue.team)),
-        ];
-
-        if let Some(project) = &issue.project {
-            output.push(format!("Project:    {}", project.name));
-        }
-
-        output.push(format!(
-            "Priority:   {}",
-            self.format_priority(issue.priority, &issue.priority_label)
-        ));
-
-        // Enhanced markdown rendering for description in interactive mode
-        if let Some(description) = &issue.description {
-            output.push(String::new());
-            if self.use_color {
-                output.push(format!("{}{}", "📝 ".white(), "Description:".cyan()));
-            } else {
-                output.push("📝 Description:".to_string());
-            }
-
-            // Render markdown to terminal if interactive
-            match self.render_markdown_to_terminal(description) {
-                Ok(rendered) => output.push(rendered),
-                Err(_) => {
-                    // Fallback to raw markdown if rendering fails
-                    output.push(description.clone());
-                }
-            }
-        }
-
-        // Metadata section with enhanced formatting
-        output.push(String::new());
-        if self.use_color {
-            output.push(format!(
-                "{}{}{}",
-                "🏷️ ".white(),
-                "Labels: ".cyan(),
-                self.format_labels(&issue.labels)
-            ));
-        } else {
-            output.push(format!("🏷️ Labels: {}", self.format_labels(&issue.labels)));
-        }
-
-        output.push(String::new());
-        if self.use_color {
-            output.push(format!(
-                "{}{} {}    {} {}",
-                "📅 ".white(),
-                "Created:".cyan(),
-                self.format_datetime(&issue.created_at).white(),
-                "Updated:".cyan(),
-                self.format_datetime(&issue.updated_at).white()
-            ));
-        } else {
-            output.push(format!(
-                "📅 Created: {}    Updated: {}",
-                self.format_datetime(&issue.created_at),
-                self.format_datetime(&issue.updated_at)
-            ));
-        }
-
-        output.push(String::new());
-        let supports_osc8 = Self::supports_osc8();
-        if self.use_color {
-            output.push(format!(
-                "{}{}\n   {}",
-                "🔗 ".white(),
-                "View in Linear:".cyan(),
-                self.format_hyperlink(&issue.url, &issue.url, supports_osc8)
-            ));
-        } else {
-            output.push(format!("🔗 View in Linear:\n   {}", issue.url));
-        }
-
-        Ok(output.join("\n"))
+        // Only render markdown in interactive mode
+        self.format_detailed_issue_impl(issue, is_interactive)
     }
 }
 

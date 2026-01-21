@@ -40,23 +40,36 @@ fn determine_use_color(no_color_flag: bool, force_color_flag: bool, is_tty: bool
         && is_tty
 }
 
-fn create_spinner(message: &str, is_interactive: bool) -> Option<ProgressBar> {
-    if !is_interactive {
-        return None;
-    }
+/// RAII guard for spinner that auto-clears on drop
+struct SpinnerGuard(Option<ProgressBar>);
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-    pb.set_message(message.to_string());
-    pb.enable_steady_tick(std::time::Duration::from_millis(
-        constants::timeouts::PROGRESS_BAR_TICK_MS,
-    ));
-    Some(pb)
+impl SpinnerGuard {
+    fn new(message: &str, is_interactive: bool) -> Self {
+        if !is_interactive {
+            return Self(None);
+        }
+
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{spinner:.blue} {msg}")
+                .unwrap(),
+        );
+        pb.set_message(message.to_string());
+        pb.enable_steady_tick(std::time::Duration::from_millis(
+            constants::timeouts::PROGRESS_BAR_TICK_MS,
+        ));
+        Self(Some(pb))
+    }
+}
+
+impl Drop for SpinnerGuard {
+    fn drop(&mut self) {
+        if let Some(ref pb) = self.0 {
+            pb.finish_and_clear();
+        }
+    }
 }
 
 fn display_error(error: &LinearError, use_color: bool) {
@@ -67,6 +80,23 @@ fn display_error(error: &LinearError, use_color: bool) {
         eprintln!();
         eprintln!("{help}");
     }
+}
+
+/// Prompt the user for yes/no confirmation. Returns true if user confirms.
+/// Skips prompt and returns true if `force` is set or not interactive.
+fn confirm_action(action: &str, force: bool, is_interactive: bool) -> bool {
+    if force || !is_interactive {
+        return true;
+    }
+
+    print!("Continue with {action}? [y/N]: ");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+    let mut response = String::new();
+    std::io::stdin().read_line(&mut response).unwrap();
+    let response = response.trim().to_lowercase();
+
+    response == "y" || response == "yes"
 }
 
 struct CreateCommandArgs {
@@ -156,21 +186,17 @@ fn main() -> Result<()> {
         }
         #[cfg(feature = "oauth")]
         Commands::Logout => {
-            let spinner = create_spinner("Logging out...", use_color);
+            let spinner = SpinnerGuard::new("Logging out...", use_color);
             // We don't need a valid OAuth manager to logout, just need to clear the storage
             match linear_sdk::storage::clear() {
                 Ok(_) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     let cli = CliOutput::with_color(use_color);
                     cli.success("Successfully logged out!");
                     Ok(())
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&LinearError::from(e), use_color);
                     std::process::exit(1);
                 }
@@ -346,12 +372,10 @@ async fn handle_create_from_file(
     };
 
     // Create the issue
-    let spinner = create_spinner("Creating issue from file...", is_interactive);
+    let spinner = SpinnerGuard::new("Creating issue from file...", is_interactive);
     match client.create_issue(sdk_input).await {
         Ok(created_issue) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!("Created issue: {}", created_issue.identifier));
@@ -380,9 +404,7 @@ async fn handle_create_from_file(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -548,12 +570,10 @@ async fn handle_create_command(
     };
 
     // Create the issue
-    let spinner = create_spinner("Creating issue...", is_interactive);
+    let spinner = SpinnerGuard::new("Creating issue...", is_interactive);
     match client.create_issue(sdk_input).await {
         Ok(created_issue) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!("Created issue: {}", created_issue.identifier));
@@ -582,9 +602,7 @@ async fn handle_create_command(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -710,25 +728,16 @@ async fn handle_update_command(
         }
         println!();
 
-        print!("Continue with update? [y/N]: ");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-        let mut response = String::new();
-        std::io::stdin().read_line(&mut response).unwrap();
-        let response = response.trim().to_lowercase();
-
-        if response != "y" && response != "yes" {
+        if !confirm_action("update", false, true) {
             cli_output.info("Update cancelled");
             return Ok(());
         }
     }
 
-    let spinner = create_spinner("Updating issue...", is_interactive);
+    let spinner = SpinnerGuard::new("Updating issue...", is_interactive);
     match client.update_issue(args.id.clone(), input).await {
         Ok(updated_issue) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!("Updated issue: {}", updated_issue.identifier));
@@ -750,9 +759,7 @@ async fn handle_update_command(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -775,14 +782,7 @@ async fn handle_close_command(
         println!("Would close issue: {id}");
         println!();
 
-        print!("Continue with close? [y/N]: ");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-        let mut response = String::new();
-        std::io::stdin().read_line(&mut response).unwrap();
-        let response = response.trim().to_lowercase();
-
-        if response != "y" && response != "yes" {
+        if !confirm_action("close", false, true) {
             cli_output.info("Close cancelled");
             return Ok(());
         }
@@ -805,12 +805,10 @@ async fn handle_close_command(
         label_ids: None,
     };
 
-    let spinner = create_spinner("Closing issue...", is_interactive);
+    let spinner = SpinnerGuard::new("Closing issue...", is_interactive);
     match client.update_issue(id.clone(), input).await {
         Ok(updated_issue) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!("Closed issue: {}", updated_issue.identifier));
@@ -821,9 +819,7 @@ async fn handle_close_command(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -846,14 +842,7 @@ async fn handle_reopen_command(
         println!("Would reopen issue: {id}");
         println!();
 
-        print!("Continue with reopen? [y/N]: ");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-        let mut response = String::new();
-        std::io::stdin().read_line(&mut response).unwrap();
-        let response = response.trim().to_lowercase();
-
-        if response != "y" && response != "yes" {
+        if !confirm_action("reopen", false, true) {
             cli_output.info("Reopen cancelled");
             return Ok(());
         }
@@ -876,12 +865,10 @@ async fn handle_reopen_command(
         label_ids: None,
     };
 
-    let spinner = create_spinner("Reopening issue...", is_interactive);
+    let spinner = SpinnerGuard::new("Reopening issue...", is_interactive);
     match client.update_issue(id.clone(), input).await {
         Ok(updated_issue) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!("Reopened issue: {}", updated_issue.identifier));
@@ -892,9 +879,7 @@ async fn handle_reopen_command(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -935,12 +920,10 @@ async fn handle_comment_command(
 
     let input = linear_sdk::CreateCommentInput { body, issue_id: id };
 
-    let spinner = create_spinner("Adding comment...", is_interactive);
+    let spinner = SpinnerGuard::new("Adding comment...", is_interactive);
     match client.create_comment(input).await {
         Ok(created_comment) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
 
             if is_interactive {
                 cli_output.success(&format!(
@@ -959,9 +942,7 @@ async fn handle_comment_command(
             }
         }
         Err(e) => {
-            if let Some(s) = spinner {
-                s.finish_and_clear();
-            }
+            drop(spinner);
             display_error(&e, use_color);
             std::process::exit(1);
         }
@@ -1068,7 +1049,7 @@ async fn run_async_commands(
         }
     };
 
-    let spinner = create_spinner("Connecting to Linear...", is_interactive);
+    let spinner = SpinnerGuard::new("Connecting to Linear...", is_interactive);
 
     // Determine if this is an OAuth token (from keychain) or API key
     let is_oauth_token = env::var("LINEAR_API_KEY").is_err();
@@ -1085,15 +1066,11 @@ async fn run_async_commands(
                 .build()
             {
                 Ok(client) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     client
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1112,15 +1089,11 @@ async fn run_async_commands(
             .build()
         {
             Ok(client) => {
-                if let Some(s) = spinner {
-                    s.finish_and_clear();
-                }
+                drop(spinner);
                 client
             }
             Err(e) => {
-                if let Some(s) = spinner {
-                    s.finish_and_clear();
-                }
+                drop(spinner);
                 display_error(&e, use_color);
                 std::process::exit(1);
             }
@@ -1146,18 +1119,14 @@ async fn run_async_commands(
                 None
             };
 
-            let spinner = create_spinner("Fetching issues...", is_interactive);
+            let spinner = SpinnerGuard::new("Fetching issues...", is_interactive);
             let issues = match client.list_issues_filtered(limit, filters).await {
                 Ok(issues) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     issues
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1189,12 +1158,10 @@ async fn run_async_commands(
             }
         }
         Commands::Issue { id, json, raw } => {
-            let spinner = create_spinner(&format!("Fetching issue {id}..."), is_interactive);
+            let spinner = SpinnerGuard::new(&format!("Fetching issue {id}..."), is_interactive);
             match client.get_issue(id).await {
                 Ok(issue) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     let output = if json {
                         let formatter = JsonFormatter::new(false);
                         match formatter.format_detailed_issue(&issue) {
@@ -1221,9 +1188,7 @@ async fn run_async_commands(
                     println!("{output}");
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1256,12 +1221,10 @@ async fn run_async_commands(
             handle_create_command(&client, args, use_color, is_interactive).await?;
         }
         Commands::Status { verbose } => {
-            let spinner = create_spinner("Checking Linear connection...", is_interactive);
+            let spinner = SpinnerGuard::new("Checking Linear connection...", is_interactive);
             match client.execute_viewer_query().await {
                 Ok(viewer_data) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     if is_interactive {
                         if use_color {
                             println!("{} Connected to Linear", "✓".green());
@@ -1280,9 +1243,7 @@ async fn run_async_commands(
                     }
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     if is_interactive {
                         if use_color {
                             println!("{} Failed to connect to Linear", "✗".red());
@@ -1344,18 +1305,14 @@ async fn run_async_commands(
             json,
             pretty: _,
         } => {
-            let spinner = create_spinner("Fetching projects...", is_interactive);
+            let spinner = SpinnerGuard::new("Fetching projects...", is_interactive);
             let projects = match client.list_projects(limit).await {
                 Ok(projects) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     projects
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1383,18 +1340,14 @@ async fn run_async_commands(
             }
         }
         Commands::Teams { json, pretty: _ } => {
-            let spinner = create_spinner("Fetching teams...", is_interactive);
+            let spinner = SpinnerGuard::new("Fetching teams...", is_interactive);
             let teams = match client.list_teams().await {
                 Ok(teams) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     teams
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1427,18 +1380,14 @@ async fn run_async_commands(
             json,
             pretty: _,
         } => {
-            let spinner = create_spinner("Fetching comments...", is_interactive);
+            let spinner = SpinnerGuard::new("Fetching comments...", is_interactive);
             let issue_with_comments = match client.get_issue_comments(&id, limit).await {
                 Ok(result) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     result
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1476,18 +1425,14 @@ async fn run_async_commands(
             json,
             pretty: _,
         } => {
-            let spinner = create_spinner("Fetching your work...", is_interactive);
+            let spinner = SpinnerGuard::new("Fetching your work...", is_interactive);
             let my_work = match client.get_my_work(limit).await {
                 Ok(work) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     work
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
@@ -1532,7 +1477,7 @@ async fn run_async_commands(
         } => {
             use crate::search::{search, SearchOptions};
 
-            let spinner = create_spinner("Searching...", is_interactive);
+            let spinner = SpinnerGuard::new("Searching...", is_interactive);
 
             let options = SearchOptions {
                 query,
@@ -1545,15 +1490,11 @@ async fn run_async_commands(
 
             let result = match search(&client, options).await {
                 Ok(result) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     result
                 }
                 Err(e) => {
-                    if let Some(s) = spinner {
-                        s.finish_and_clear();
-                    }
+                    drop(spinner);
                     display_error(&e, use_color);
                     std::process::exit(1);
                 }
