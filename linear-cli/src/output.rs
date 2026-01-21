@@ -68,91 +68,68 @@ impl TableFormatter {
 
     fn format_status(&self, status_str: &str) -> String {
         let status: IssueStatus = status_str.into();
+        let text = status.to_string();
 
-        if self.use_color {
-            match status {
-                IssueStatus::Todo | IssueStatus::Backlog => {
-                    format!("{}", status.to_string().dimmed())
-                }
-                IssueStatus::InProgress => format!("{}", status.to_string().yellow()),
-                IssueStatus::Done => format!("{}", status.to_string().green()),
-                IssueStatus::Canceled => format!("{}", status.to_string().red()),
-                IssueStatus::Unknown(_) => status.to_string(),
-            }
-        } else {
-            status.to_string()
+        if !self.use_color {
+            return text;
+        }
+
+        match status {
+            IssueStatus::Todo | IssueStatus::Backlog => text.dimmed().to_string(),
+            IssueStatus::InProgress => text.yellow().to_string(),
+            IssueStatus::Done => text.green().to_string(),
+            IssueStatus::Canceled => text.red().to_string(),
+            IssueStatus::Unknown(_) => text,
         }
     }
 
     fn format_assignee(&self, assignee: &Option<String>) -> String {
-        let text = assignee.as_deref().unwrap_or("Unassigned");
-
-        if self.use_color && assignee.is_none() {
-            text.dimmed().to_string()
-        } else {
-            text.to_string()
+        match assignee {
+            Some(name) => name.clone(),
+            None if self.use_color => "Unassigned".dimmed().to_string(),
+            None => "Unassigned".to_string(),
         }
     }
 
     fn format_detailed_assignee(&self, assignee: &Option<linear_sdk::IssueAssignee>) -> String {
         match assignee {
-            Some(a) => {
-                if self.use_color {
-                    format!("{} ({})", a.name.bold(), a.email.dimmed())
-                } else {
-                    format!("{} ({})", a.name, a.email)
-                }
-            }
-            None => {
-                if self.use_color {
-                    "Unassigned".dimmed().to_string()
-                } else {
-                    "Unassigned".to_string()
-                }
-            }
+            Some(a) if self.use_color => format!("{} ({})", a.name.bold(), a.email.dimmed()),
+            Some(a) => format!("{} ({})", a.name, a.email),
+            None if self.use_color => "Unassigned".dimmed().to_string(),
+            None => "Unassigned".to_string(),
         }
     }
 
     fn format_team(&self, team: &Option<linear_sdk::IssueTeam>) -> String {
         match team {
-            Some(t) => {
-                if self.use_color {
-                    format!("{} ({})", t.name.cyan(), t.key.dimmed())
-                } else {
-                    format!("{} ({})", t.name, t.key)
-                }
-            }
+            Some(t) if self.use_color => format!("{} ({})", t.name.cyan(), t.key.dimmed()),
+            Some(t) => format!("{} ({})", t.name, t.key),
             None => "No team".to_string(),
         }
     }
 
     fn format_priority(&self, priority: Option<i64>, priority_label: &Option<String>) -> String {
-        if let Some(label) = priority_label {
-            if self.use_color {
-                match label.as_str() {
-                    "Urgent" => label.red().bold().to_string(),
-                    "High" => label.red().to_string(),
-                    "Medium" => label.yellow().to_string(),
-                    "Low" => label.blue().to_string(),
-                    _ => label.to_string(),
-                }
-            } else {
-                label.to_string()
-            }
-        } else if let Some(p) = priority {
-            p.to_string()
-        } else {
-            "None".to_string()
+        match (priority_label, priority) {
+            (Some(label), _) if self.use_color => match label.as_str() {
+                "Urgent" => label.red().bold().to_string(),
+                "High" => label.red().to_string(),
+                "Medium" => label.yellow().to_string(),
+                "Low" => label.blue().to_string(),
+                _ => label.to_string(),
+            },
+            (Some(label), _) => label.to_string(),
+            (None, Some(p)) => p.to_string(),
+            (None, None) => "None".to_string(),
         }
     }
 
     fn format_labels(&self, labels: &[linear_sdk::IssueLabel]) -> String {
         if labels.is_empty() {
-            if self.use_color {
-                return "None".dimmed().to_string();
+            return if self.use_color {
+                "None".dimmed().to_string()
             } else {
-                return "None".to_string();
-            }
+                "None".to_string()
+            };
         }
 
         labels
@@ -160,7 +137,6 @@ impl TableFormatter {
             .enumerate()
             .map(|(i, l)| {
                 if self.use_color {
-                    // Use different colors for visual variety
                     let colored_name = match i % 4 {
                         0 => l.name.cyan().to_string(),
                         1 => l.name.purple().to_string(),

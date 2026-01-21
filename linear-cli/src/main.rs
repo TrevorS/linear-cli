@@ -112,6 +112,46 @@ struct CreateCommandArgs {
     dry_run: bool,
 }
 
+/// Resolve assignee string to user ID.
+/// Handles special values: "me"/"self" -> current user, "unassigned"/"none" -> None
+/// UUIDs are passed through as-is.
+async fn resolve_assignee_to_id(
+    client: &LinearClient,
+    assignee: Option<String>,
+) -> Result<Option<String>> {
+    let Some(assignee) = assignee else {
+        return Ok(None);
+    };
+
+    if assignee.trim().is_empty()
+        || assignee.eq_ignore_ascii_case("unassigned")
+        || assignee.eq_ignore_ascii_case("none")
+        || assignee.eq_ignore_ascii_case("null")
+    {
+        return Ok(None);
+    }
+
+    if assignee.eq_ignore_ascii_case("me") || assignee.eq_ignore_ascii_case("self") {
+        let viewer_data = client.execute_viewer_query().await?;
+        return Ok(Some(viewer_data.viewer.id));
+    }
+
+    // UUID or email/name - pass through as-is
+    Ok(Some(assignee))
+}
+
+/// Resolve team string to team ID.
+/// If the input looks like a UUID, it's passed through. Otherwise, it's resolved as a team key.
+async fn resolve_team_to_id(client: &LinearClient, team: &str) -> Result<String> {
+    // Check if it looks like a UUID (hex digits and hyphens, longer than 20 chars)
+    if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
+        return Ok(team.to_string());
+    }
+
+    // Resolve as team key
+    client.resolve_team_key_to_id(team).await
+}
+
 fn main() -> Result<()> {
     env_logger::init();
 
@@ -274,41 +314,25 @@ async fn handle_create_from_file(
     }
 
     let team_id = match team {
-        Some(team) => {
-            // Enhanced team resolution - detect UUID vs team key
-            if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
-                // Looks like a UUID
-                team
-            } else {
-                // Assume it's a team key, resolve it
-                match client.resolve_team_key_to_id(&team).await {
-                    Ok(team_id) => team_id,
-                    Err(e) => {
-                        cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
-                        std::process::exit(1);
-                    }
-                }
+        Some(team) => match resolve_team_to_id(client, &team).await {
+            Ok(team_id) => team_id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
+                std::process::exit(1);
             }
-        }
+        },
         None => {
             cli_output.error("Team is required (specify in frontmatter or use --team)");
             std::process::exit(1);
         }
     };
 
-    // Enhanced assignee resolution
-    let assignee_id = if let Some(assignee) = assignee {
-        if assignee.trim().is_empty() || assignee.eq_ignore_ascii_case("unassigned") {
-            None
-        } else if assignee.eq_ignore_ascii_case("me") {
-            let viewer_data = client.execute_viewer_query().await?;
-            Some(viewer_data.viewer.id)
-        } else {
-            // Could be UUID or email/name - pass as-is for now
-            Some(assignee)
+    let assignee_id = match resolve_assignee_to_id(client, assignee).await {
+        Ok(id) => id,
+        Err(e) => {
+            cli_output.error(&format!("Failed to resolve assignee: {e}"));
+            std::process::exit(1);
         }
-    } else {
-        None
     };
 
     let input = crate::interactive::InteractiveCreateInput {
@@ -476,22 +500,13 @@ async fn handle_create_command(
         };
 
         let team_id = match args.team {
-            Some(team) => {
-                // Enhanced team resolution - detect UUID vs team key
-                if team.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && team.len() > 20 {
-                    // Looks like a UUID
-                    team
-                } else {
-                    // Assume it's a team key, resolve it
-                    match client.resolve_team_key_to_id(&team).await {
-                        Ok(team_id) => team_id,
-                        Err(e) => {
-                            cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
-                            std::process::exit(1);
-                        }
-                    }
+            Some(team) => match resolve_team_to_id(client, &team).await {
+                Ok(team_id) => team_id,
+                Err(e) => {
+                    cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
+                    std::process::exit(1);
                 }
-            }
+            },
             None => {
                 cli_output.error("Team is required for issue creation");
                 eprintln!("Use --team TEAM_KEY or run without arguments for interactive mode");
@@ -499,19 +514,12 @@ async fn handle_create_command(
             }
         };
 
-        // Enhanced assignee resolution
-        let assignee_id = if let Some(assignee) = args.assignee {
-            if assignee.trim().is_empty() || assignee.eq_ignore_ascii_case("unassigned") {
-                None
-            } else if assignee.eq_ignore_ascii_case("me") {
-                let viewer_data = client.execute_viewer_query().await?;
-                Some(viewer_data.viewer.id)
-            } else {
-                // Could be UUID or email/name - pass as-is for now
-                Some(assignee)
+        let assignee_id = match resolve_assignee_to_id(client, args.assignee).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve assignee: {e}"));
+                std::process::exit(1);
             }
-        } else {
-            None
         };
 
         crate::interactive::InteractiveCreateInput {
@@ -645,19 +653,21 @@ async fn handle_update_command(
         std::process::exit(1);
     }
 
-    // Resolve assignee if provided
-    let assignee_id = if let Some(assignee_value) = args.assignee {
-        if assignee_value.trim().is_empty() || assignee_value.eq_ignore_ascii_case("unassigned") {
+    // Resolve assignee if provided (empty string for update means "unassign")
+    let assignee_id = match &args.assignee {
+        Some(assignee)
+            if assignee.trim().is_empty() || assignee.eq_ignore_ascii_case("unassigned") =>
+        {
             Some(String::new()) // Empty string to unassign
-        } else if assignee_value.eq_ignore_ascii_case("me") {
-            let viewer_data = client.execute_viewer_query().await?;
-            Some(viewer_data.viewer.id)
-        } else {
-            // Could be UUID or email/name - pass as-is for now
-            Some(assignee_value)
         }
-    } else {
-        None
+        Some(_) => match resolve_assignee_to_id(client, args.assignee.clone()).await {
+            Ok(id) => id,
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve assignee: {e}"));
+                std::process::exit(1);
+            }
+        },
+        None => None,
     };
 
     // Resolve status to state_id if provided

@@ -78,29 +78,6 @@ pub struct GraphQLError {
     pub extensions: Option<serde_json::Value>,
 }
 
-#[derive(Default)]
-pub struct ErrorRecovery {}
-
-impl ErrorRecovery {
-    pub fn should_retry(&self, error: &LinearError) -> bool {
-        error.is_retryable()
-    }
-}
-
-pub trait ErrorContextExt<T> {
-    fn context(self, msg: &str) -> Result<T, LinearError>;
-}
-
-impl<T> ErrorContextExt<T> for Result<T, LinearError> {
-    fn context(self, msg: &str) -> Result<T, LinearError> {
-        self.map_err(|e| LinearError::Network {
-            message: format!("{msg}: {e}"),
-            retryable: e.is_retryable(),
-            source: Box::new(e),
-        })
-    }
-}
-
 pub fn format_error_with_suggestion(err: &LinearError) -> String {
     let mut output = err.to_string();
 
@@ -316,42 +293,6 @@ mod tests {
             err.help_text(),
             Some("Wait 60 seconds before making another request")
         );
-    }
-
-    #[test]
-    fn test_error_context_trait() {
-        let base_err = std::io::Error::new(std::io::ErrorKind::Other, "base error");
-        let contextualized: Result<(), LinearError> = Err(LinearError::Network {
-            message: "Network operation failed".to_string(),
-            retryable: false,
-            source: Box::new(base_err),
-        });
-
-        let with_context = contextualized.context("While fetching issues");
-        assert!(with_context.is_err());
-
-        let err = with_context.unwrap_err();
-        assert!(format!("{err:?}").contains("While fetching issues"));
-    }
-
-    #[test]
-    fn test_error_recovery_retryable() {
-        let recovery = ErrorRecovery::default();
-
-        let network_err = LinearError::Network {
-            message: "Connection timeout".to_string(),
-            retryable: true,
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout")),
-        };
-
-        assert!(recovery.should_retry(&network_err));
-
-        let auth_err = LinearError::Auth {
-            reason: Cow::Borrowed("Invalid credentials"),
-            source: None,
-        };
-
-        assert!(!recovery.should_retry(&auth_err));
     }
 
     #[test]
