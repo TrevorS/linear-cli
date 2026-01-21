@@ -49,7 +49,7 @@ type ConfiguredClient = oauth2::Client<
 #[cfg(feature = "oauth")]
 pub struct OAuthManager {
     client: ConfiguredClient,
-    http_client: reqwest::blocking::Client,
+    http_client: oauth2::reqwest::blocking::Client,
 }
 
 #[cfg(feature = "oauth")]
@@ -74,11 +74,8 @@ impl OAuthManager {
                     .map_err(|_| crate::LinearError::OAuthConfig)?,
             );
 
-        // Create HTTP client without redirect following (security best practice)
-        let http_client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| auth_error("HTTP client build failed"))?;
+        // Create HTTP client for OAuth token exchange
+        let http_client = oauth2::reqwest::blocking::Client::new();
 
         Ok(Self {
             client,
