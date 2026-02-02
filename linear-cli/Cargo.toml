@@ -16,7 +16,7 @@ url = "2.5.8"
 reqwest = { version = "0.13" }
 dirs = "6.0"
 chrono = { version = "0.4.43", features = ["serde"] }
-clap = { version = "4.5.54", features = ["derive"] }
+clap = { version = "4.5.56", features = ["derive"] }
 const_format = "0.2"
 env_logger = "0.11.8"
 log = "0.4"
@@ -42,7 +42,7 @@ dialoguer = "0.12"
 # Replaced atty with is_terminal_polyfill (already included via crossterm)
 
 [dev-dependencies]
-insta = "1.43.1"
+insta = "1.46.2"
 serial_test = "3.2.0"
 mockito = "1.7.0"
 tempfile = "3.24"
