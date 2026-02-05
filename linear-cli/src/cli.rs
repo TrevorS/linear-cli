@@ -301,6 +301,19 @@ pub enum Commands {
         #[arg(long)]
         include_archived: bool,
     },
+    /// Create a relation between two issues (blocks, related, duplicate, similar)
+    Relate {
+        /// Source issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// Relation type: blocks | blocked-by | related | duplicate | duplicate-of | similar
+        #[arg(value_parser = ["blocks", "blocked-by", "related", "duplicate", "duplicate-of", "similar"])]
+        kind: String,
+
+        /// Target issue identifier(s) (e.g., ENG-124)
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
+    },
     /// Attach a URL to an issue (e.g., a pull request)
     Attach {
         /// Issue identifier (e.g., ENG-123)

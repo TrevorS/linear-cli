@@ -1109,6 +1109,93 @@ async fn handle_attach_command(
     Ok(())
 }
 
+async fn handle_relate_command(
+    client: &LinearClient,
+    id: String,
+    kind: String,
+    targets: Vec<String>,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    use linear_sdk::{CreateIssueRelationInput, IssueRelationKind};
+
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Parse the relation kind. `blocked-by` and `duplicate-of` swap the issue pair.
+    let (relation_kind, swap) = match kind.as_str() {
+        "blocks" => (IssueRelationKind::Blocks, false),
+        "blocked-by" => (IssueRelationKind::Blocks, true),
+        "related" => (IssueRelationKind::Related, false),
+        "duplicate" => (IssueRelationKind::Duplicate, false),
+        "duplicate-of" => (IssueRelationKind::Duplicate, true),
+        "similar" => (IssueRelationKind::Similar, false),
+        _ => unreachable!("clap restricts the set of allowed values"),
+    };
+
+    let source = client.get_issue(id.clone()).await?;
+
+    let mut had_error = false;
+    for target_ref in targets {
+        let target = match client.get_issue(target_ref.clone()).await {
+            Ok(t) => t,
+            Err(e) => {
+                had_error = true;
+                if is_interactive {
+                    cli_output.error(&format!("Could not resolve {target_ref}: {e}"));
+                } else {
+                    eprintln!("{target_ref}: {e}");
+                }
+                continue;
+            }
+        };
+
+        let (issue_id, related_issue_id) = if swap {
+            (target.id.clone(), source.id.clone())
+        } else {
+            (source.id.clone(), target.id.clone())
+        };
+
+        let spinner = SpinnerGuard::new(
+            &format!(
+                "Linking {} {} {}...",
+                source.identifier, kind, target.identifier
+            ),
+            is_interactive,
+        );
+        let input = CreateIssueRelationInput {
+            issue_id,
+            related_issue_id,
+            kind: relation_kind,
+        };
+        match client.create_issue_relation(input).await {
+            Ok(relation) => {
+                drop(spinner);
+                if is_interactive {
+                    cli_output.success(&format!(
+                        "{} {} {}",
+                        relation.issue_identifier,
+                        relation.kind.as_str(),
+                        relation.related_issue_identifier
+                    ));
+                } else {
+                    println!("{}", relation.id);
+                }
+            }
+            Err(e) => {
+                drop(spinner);
+                had_error = true;
+                display_error(&e, use_color);
+            }
+        }
+    }
+
+    if had_error {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
 /// Apply configuration defaults to CLI arguments where not explicitly provided
 fn apply_config_defaults(cli: &mut Cli, config: &Config) {
     match &mut cli.command {
@@ -1473,6 +1560,9 @@ async fn run_async_commands(
         Commands::Attach { id, url, title } => {
             handle_attach_command(&client, id, url, title, use_color, is_interactive).await?;
         }
+        Commands::Relate { id, kind, targets } => {
+            handle_relate_command(&client, id, kind, targets, use_color, is_interactive).await?;
+        }
         Commands::Projects {
             limit,
             json,
@@ -1807,6 +1897,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1841,6 +1932,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1875,6 +1967,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1909,6 +2002,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1943,6 +2037,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2093,6 +2188,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2125,6 +2221,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2157,6 +2254,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2199,6 +2297,7 @@ mod tests {
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
             Commands::Attach { .. } => panic!("Expected Issues command"),
+            Commands::Relate { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),

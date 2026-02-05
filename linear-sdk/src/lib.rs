@@ -166,6 +166,16 @@ pub struct CreateAttachment;
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "graphql/schema.json",
+    query_path = "graphql/mutations/create_issue_relation.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct CreateIssueRelation;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
     query_path = "graphql/queries/projects.graphql",
     response_derives = "Debug, Clone",
     variables_derives = "Debug, Clone",
@@ -358,6 +368,40 @@ pub struct CreatedAttachment {
     pub url: String,
     pub title: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueRelationKind {
+    Blocks,
+    Related,
+    Duplicate,
+    Similar,
+}
+
+impl IssueRelationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blocks => "blocks",
+            Self::Related => "related",
+            Self::Duplicate => "duplicate",
+            Self::Similar => "similar",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateIssueRelationInput {
+    pub issue_id: String,
+    pub related_issue_id: String,
+    pub kind: IssueRelationKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatedIssueRelation {
+    pub id: String,
+    pub kind: IssueRelationKind,
+    pub issue_identifier: String,
+    pub related_issue_identifier: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1913,6 +1957,59 @@ impl LinearClient {
             url: attachment.url,
             title: attachment.title,
             created_at: attachment.created_at,
+        })
+    }
+
+    pub async fn create_issue_relation(
+        &self,
+        input: CreateIssueRelationInput,
+    ) -> Result<CreatedIssueRelation> {
+        let relation_type = match input.kind {
+            IssueRelationKind::Blocks => create_issue_relation::IssueRelationType::blocks,
+            IssueRelationKind::Related => create_issue_relation::IssueRelationType::related,
+            IssueRelationKind::Duplicate => create_issue_relation::IssueRelationType::duplicate,
+            IssueRelationKind::Similar => create_issue_relation::IssueRelationType::similar,
+        };
+
+        let variables = create_issue_relation::Variables {
+            input: create_issue_relation::IssueRelationCreateInput {
+                id: None,
+                type_: relation_type,
+                issue_id: input.issue_id,
+                related_issue_id: input.related_issue_id,
+            },
+        };
+
+        let data = self
+            .execute_graphql::<CreateIssueRelation, _>(variables)
+            .await?;
+
+        if !data.issue_relation_create.success {
+            return Err(LinearError::GraphQL {
+                message: "Issue relation creation failed".to_string(),
+                errors: vec![],
+            });
+        }
+
+        let relation = data.issue_relation_create.issue_relation;
+        let kind = match relation.type_.as_str() {
+            "blocks" => IssueRelationKind::Blocks,
+            "related" => IssueRelationKind::Related,
+            "duplicate" => IssueRelationKind::Duplicate,
+            "similar" => IssueRelationKind::Similar,
+            other => {
+                return Err(LinearError::GraphQL {
+                    message: format!("Unknown issue relation type returned: {other}"),
+                    errors: vec![],
+                });
+            }
+        };
+
+        Ok(CreatedIssueRelation {
+            id: relation.id,
+            kind,
+            issue_identifier: relation.issue.identifier,
+            related_issue_identifier: relation.related_issue.identifier,
         })
     }
 
