@@ -78,7 +78,7 @@ LINEAR_API_KEY=lin_api_xxxxx
 
 ## Features
 
-- **Issue Management**: List, view, create, update, close, and reopen issues
+- **Issue Management**: List, view, create, update, close, reopen, and attach URLs to issues
 - **Rich Terminal Output**: Color-coded tables with syntax-highlighted markdown
 - **Flexible Input**: CLI arguments, interactive prompts, or markdown files with frontmatter
 - **Smart Terminal Detection**: Automatic color/formatting based on TTY capabilities
@@ -138,6 +138,15 @@ linear create \
   --assignee me \
   --priority 1
 
+# With labels, estimate, and cycle
+linear create \
+  --title "Fix auth timeout" \
+  --team ENG \
+  --label bug \
+  --label backend \
+  --estimate 3 \
+  --cycle current
+
 # From markdown file
 linear create --from-file issue.md
 
@@ -157,6 +166,11 @@ title: "Fix authentication race condition"
 team: ENG
 assignee: me
 priority: 1
+estimate: 3
+labels:
+  - bug
+  - backend
+cycle: current
 ---
 
 # Problem
@@ -185,6 +199,9 @@ linear create --from-file issue.md
 # Update issue status
 linear update ENG-123 --status "In Progress"
 
+# Update labels, estimate, cycle
+linear update ENG-123 --label bug --label critical --estimate 5 --cycle current
+
 # Close issue
 linear close ENG-123
 
@@ -193,6 +210,10 @@ linear reopen ENG-123
 
 # Add comment
 linear comment ENG-123 "Fixed in PR #456"
+
+# Attach a URL (e.g., a pull request)
+linear attach ENG-123 --url https://github.com/org/repo/pull/42
+linear attach ENG-123 --url https://github.com/org/repo/pull/42 --title "Fix PR"
 ```
 
 ### Browse Projects and Teams

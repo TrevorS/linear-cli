@@ -105,6 +105,9 @@ struct CreateCommandArgs {
     team: Option<String>,
     assignee: Option<String>,
     priority: Option<i64>,
+    estimate: Option<i64>,
+    labels: Vec<String>,
+    cycle: Option<String>,
     project: Option<String>,
     project_id: Option<String>,
     from_file: Option<String>,
@@ -150,6 +153,99 @@ async fn resolve_team_to_id(client: &LinearClient, team: &str) -> Result<String>
 
     // Resolve as team key
     client.resolve_team_key_to_id(team).await
+}
+
+/// Fields used for dry-run preview output when creating an issue
+struct DryRunPreview<'a> {
+    header: &'a str,
+    input: &'a crate::interactive::InteractiveCreateInput,
+    labels: &'a [String],
+    cycle: Option<&'a str>,
+    project: Option<&'a str>,
+}
+
+fn print_dry_run_preview(cli_output: &CliOutput, preview: &DryRunPreview) {
+    cli_output.info("Dry run mode - no issue will be created");
+    println!();
+    println!("{}:", preview.header);
+    println!("  Title: {}", preview.input.title);
+    if let Some(desc) = &preview.input.description {
+        println!("  Description: {desc}");
+    }
+    println!("  Team ID: {}", preview.input.team_id);
+    if let Some(assignee_id) = &preview.input.assignee_id {
+        println!("  Assignee ID: {assignee_id}");
+    }
+    if let Some(priority) = preview.input.priority {
+        println!("  Priority: {priority}");
+    }
+    if let Some(estimate) = preview.input.estimate {
+        println!("  Estimate: {estimate}");
+    }
+    if !preview.labels.is_empty() {
+        println!("  Labels: {}", preview.labels.join(", "));
+    }
+    if let Some(cycle) = preview.cycle {
+        println!("  Cycle: {cycle}");
+    }
+    if let Some(project) = preview.project {
+        println!("  Project: {project}");
+    }
+}
+
+/// Display a successfully created issue
+fn display_created_issue(
+    cli_output: &CliOutput,
+    issue: &linear_sdk::CreatedIssue,
+    open: bool,
+    is_interactive: bool,
+) {
+    if is_interactive {
+        cli_output.success(&format!("Created issue: {}", issue.identifier));
+        println!("Title: {}", issue.title);
+        if let Some(desc) = &issue.description {
+            println!("Description: {desc}");
+        }
+        println!("Status: {}", issue.state.name);
+        if let Some(assignee) = &issue.assignee {
+            println!("Assignee: {}", assignee.name);
+        }
+        if let Some(team) = &issue.team {
+            println!("Team: {} ({})", team.name, team.key);
+        }
+        println!("URL: {}", issue.url);
+
+        if open {
+            println!();
+            cli_output.info(&format!("Issue URL: {}", issue.url));
+            cli_output.info("Please open this URL in your browser");
+        }
+    } else {
+        println!("{}", issue.identifier);
+    }
+}
+
+/// Resolve a project name to its ID using the interactive prompter.
+/// Returns project_id from --project-id if --project is not specified.
+async fn resolve_project_to_id(
+    client: &LinearClient,
+    cli_output: &CliOutput,
+    project_name: Option<&str>,
+    project_id_fallback: Option<String>,
+) -> Result<Option<String>> {
+    if let Some(name) = project_name {
+        use crate::interactive::InteractivePrompter;
+        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        match prompter.resolve_project(name).await {
+            Ok(id) => Ok(id),
+            Err(e) => {
+                cli_output.error(&format!("Failed to resolve project '{name}': {e}"));
+                std::process::exit(1);
+            }
+        }
+    } else {
+        Ok(project_id_fallback)
+    }
 }
 
 fn main() -> Result<()> {
@@ -306,6 +402,17 @@ async fn handle_create_from_file(
         .or(markdown_file.frontmatter.assignee.as_ref())
         .cloned();
     let priority = args.priority.or(markdown_file.frontmatter.priority);
+    let estimate = args.estimate.or(markdown_file.frontmatter.estimate);
+    let labels: Vec<String> = if !args.labels.is_empty() {
+        args.labels.clone()
+    } else {
+        markdown_file.frontmatter.labels.clone().unwrap_or_default()
+    };
+    let cycle = args
+        .cycle
+        .as_ref()
+        .or(markdown_file.frontmatter.cycle.as_ref())
+        .cloned();
 
     // Validate required fields
     if title.trim().is_empty() {
@@ -338,50 +445,48 @@ async fn handle_create_from_file(
     let input = crate::interactive::InteractiveCreateInput {
         title,
         description,
-        team_id,
+        team_id: team_id.clone(),
         assignee_id,
         priority,
+        estimate,
     };
 
     // Handle dry-run mode
     if args.dry_run {
-        cli_output.info("Dry run mode - no issue will be created");
-        println!();
-        println!("Would create issue from file '{file_path}':");
-        println!("  Title: {}", input.title);
-        if let Some(desc) = &input.description {
-            println!("  Description: {desc}");
-        }
-        println!("  Team ID: {}", input.team_id);
-        if let Some(assignee_id) = &input.assignee_id {
-            println!("  Assignee ID: {assignee_id}");
-        }
-        if let Some(priority) = input.priority {
-            println!("  Priority: {priority}");
-        }
-        if let Some(labels) = &markdown_file.frontmatter.labels {
-            println!("  Labels: {labels:?} (not yet supported)");
-        }
-        if let Some(project) = &markdown_file.frontmatter.project {
-            println!("  Project: {project} (not yet supported)");
-        }
+        print_dry_run_preview(
+            &cli_output,
+            &DryRunPreview {
+                header: &format!("Would create issue from file '{file_path}'"),
+                input: &input,
+                labels: &labels,
+                cycle: cycle.as_deref(),
+                project: markdown_file.frontmatter.project.as_deref(),
+            },
+        );
         return Ok(());
     }
 
     // Resolve project if provided
-    let project_id = if let Some(project_name) = &args.project {
-        // Use project name - need to resolve to ID
-        use crate::interactive::InteractivePrompter;
-        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
-        match prompter.resolve_project(project_name).await {
-            Ok(id) => id,
-            Err(e) => {
-                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
-                std::process::exit(1);
-            }
-        }
+    let project_id = resolve_project_to_id(
+        client,
+        &cli_output,
+        args.project.as_deref(),
+        args.project_id.clone(),
+    )
+    .await?;
+
+    // Resolve labels if provided
+    let label_ids = if !labels.is_empty() {
+        Some(client.resolve_label_names_to_ids(&team_id, &labels).await?)
     } else {
-        args.project_id.clone()
+        None
+    };
+
+    // Resolve cycle if provided
+    let cycle_id = if let Some(cycle_str) = &cycle {
+        Some(client.resolve_cycle_to_id(&team_id, cycle_str).await?)
+    } else {
+        None
     };
 
     // Build the SDK create input
@@ -392,7 +497,9 @@ async fn handle_create_from_file(
         assignee_id: input.assignee_id,
         priority: input.priority,
         project_id,
-        label_ids: None, // Future enhancement - need to resolve label names to IDs
+        label_ids,
+        estimate: input.estimate,
+        cycle_id,
     };
 
     // Create the issue
@@ -400,32 +507,7 @@ async fn handle_create_from_file(
     match client.create_issue(sdk_input).await {
         Ok(created_issue) => {
             drop(spinner);
-
-            if is_interactive {
-                cli_output.success(&format!("Created issue: {}", created_issue.identifier));
-                println!("Title: {}", created_issue.title);
-                if let Some(desc) = &created_issue.description {
-                    println!("Description: {desc}");
-                }
-                println!("Status: {}", created_issue.state.name);
-                if let Some(assignee) = &created_issue.assignee {
-                    println!("Assignee: {}", assignee.name);
-                }
-                if let Some(team) = &created_issue.team {
-                    println!("Team: {} ({})", team.name, team.key);
-                }
-                println!("URL: {}", created_issue.url);
-
-                // Handle --open flag
-                if args.open {
-                    println!();
-                    cli_output.info(&format!("Issue URL: {}", created_issue.url));
-                    cli_output.info("Please open this URL in your browser");
-                }
-            } else {
-                // Non-interactive: just print the identifier for scripting
-                println!("{}", created_issue.identifier);
-            }
+            display_created_issue(&cli_output, &created_issue, args.open, is_interactive);
         }
         Err(e) => {
             drop(spinner);
@@ -477,6 +559,7 @@ async fn handle_create_command(
             team: args.team,
             assignee: args.assignee,
             priority: args.priority,
+            estimate: args.estimate,
         };
 
         match prompter.collect_create_input(options).await {
@@ -528,42 +611,54 @@ async fn handle_create_command(
             team_id,
             assignee_id,
             priority: args.priority,
+            estimate: args.estimate,
         }
     };
 
     // Handle dry-run mode
     if args.dry_run {
-        cli_output.info("Dry run mode - no issue will be created");
-        println!();
-        println!("Would create issue:");
-        println!("  Title: {}", input.title);
-        if let Some(desc) = &input.description {
-            println!("  Description: {desc}");
-        }
-        println!("  Team ID: {}", input.team_id);
-        if let Some(assignee_id) = &input.assignee_id {
-            println!("  Assignee ID: {assignee_id}");
-        }
-        if let Some(priority) = input.priority {
-            println!("  Priority: {priority}");
-        }
+        print_dry_run_preview(
+            &cli_output,
+            &DryRunPreview {
+                header: "Would create issue",
+                input: &input,
+                labels: &args.labels,
+                cycle: args.cycle.as_deref(),
+                project: None,
+            },
+        );
         return Ok(());
     }
 
     // Resolve project if provided
-    let project_id = if let Some(project_name) = &args.project {
-        // Use project name - need to resolve to ID
-        use crate::interactive::InteractivePrompter;
-        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
-        match prompter.resolve_project(project_name).await {
-            Ok(id) => id,
-            Err(e) => {
-                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
-                std::process::exit(1);
-            }
-        }
+    let project_id = resolve_project_to_id(
+        client,
+        &cli_output,
+        args.project.as_deref(),
+        args.project_id.clone(),
+    )
+    .await?;
+
+    // Resolve labels if provided
+    let label_ids = if !args.labels.is_empty() {
+        Some(
+            client
+                .resolve_label_names_to_ids(&input.team_id, &args.labels)
+                .await?,
+        )
     } else {
-        args.project_id.clone()
+        None
+    };
+
+    // Resolve cycle if provided
+    let cycle_id = if let Some(cycle_str) = &args.cycle {
+        Some(
+            client
+                .resolve_cycle_to_id(&input.team_id, cycle_str)
+                .await?,
+        )
+    } else {
+        None
     };
 
     // Build the SDK create input
@@ -574,7 +669,9 @@ async fn handle_create_command(
         assignee_id: input.assignee_id,
         priority: input.priority,
         project_id,
-        label_ids: None, // Future enhancement
+        label_ids,
+        estimate: input.estimate,
+        cycle_id,
     };
 
     // Create the issue
@@ -582,32 +679,7 @@ async fn handle_create_command(
     match client.create_issue(sdk_input).await {
         Ok(created_issue) => {
             drop(spinner);
-
-            if is_interactive {
-                cli_output.success(&format!("Created issue: {}", created_issue.identifier));
-                println!("Title: {}", created_issue.title);
-                if let Some(desc) = &created_issue.description {
-                    println!("Description: {desc}");
-                }
-                println!("Status: {}", created_issue.state.name);
-                if let Some(assignee) = &created_issue.assignee {
-                    println!("Assignee: {}", assignee.name);
-                }
-                if let Some(team) = &created_issue.team {
-                    println!("Team: {} ({})", team.name, team.key);
-                }
-                println!("URL: {}", created_issue.url);
-
-                // Handle --open flag
-                if args.open {
-                    println!();
-                    cli_output.info(&format!("Issue URL: {}", created_issue.url));
-                    cli_output.info("Please open this URL in your browser");
-                }
-            } else {
-                // Non-interactive: just print the identifier for scripting
-                println!("{}", created_issue.identifier);
-            }
+            display_created_issue(&cli_output, &created_issue, args.open, is_interactive);
         }
         Err(e) => {
             drop(spinner);
@@ -626,6 +698,9 @@ struct UpdateCommandArgs {
     assignee: Option<String>,
     status: Option<String>,
     priority: Option<i64>,
+    estimate: Option<i64>,
+    labels: Vec<String>,
+    cycle: Option<String>,
     project: Option<String>,
     project_id: Option<String>,
     force: bool,
@@ -645,11 +720,14 @@ async fn handle_update_command(
         && args.assignee.is_none()
         && args.status.is_none()
         && args.priority.is_none()
+        && args.estimate.is_none()
+        && args.labels.is_empty()
+        && args.cycle.is_none()
         && args.project.is_none()
         && args.project_id.is_none()
     {
         cli_output.error("At least one field must be specified for update");
-        eprintln!("Use --title, --description, --assignee, --status, --priority, --project, or --project-id");
+        eprintln!("Use --title, --description, --assignee, --status, --priority, --estimate, --label, --cycle, --project, or --project-id");
         std::process::exit(1);
     }
 
@@ -670,37 +748,50 @@ async fn handle_update_command(
         None => None,
     };
 
+    // Fetch issue to get team_id if any field needs it
+    let needs_team = args.status.is_some() || !args.labels.is_empty() || args.cycle.is_some();
+    let issue = if needs_team {
+        Some(client.get_issue(args.id.clone()).await?)
+    } else {
+        None
+    };
+    let team_id = issue
+        .as_ref()
+        .and_then(|i| i.team.as_ref())
+        .map(|t| t.id.clone());
+
     // Resolve status to state_id if provided
     let state_id = if let Some(ref status_name) = args.status {
-        // Get the issue first to determine its team
-        let issue = client.get_issue(args.id.clone()).await?;
-        let team_id = issue.team.as_ref().unwrap().id.clone();
+        let tid = team_id.as_ref().unwrap();
+        Some(client.resolve_status_to_state_id(tid, status_name).await?)
+    } else {
+        None
+    };
 
-        // Resolve status name to actual state ID for this team
-        Some(
-            client
-                .resolve_status_to_state_id(&team_id, status_name)
-                .await?,
-        )
+    // Resolve labels if provided
+    let label_ids = if !args.labels.is_empty() {
+        let tid = team_id.as_ref().unwrap();
+        Some(client.resolve_label_names_to_ids(tid, &args.labels).await?)
+    } else {
+        None
+    };
+
+    // Resolve cycle if provided
+    let cycle_id = if let Some(ref cycle_str) = args.cycle {
+        let tid = team_id.as_ref().unwrap();
+        Some(client.resolve_cycle_to_id(tid, cycle_str).await?)
     } else {
         None
     };
 
     // Resolve project if provided
-    let project_id = if let Some(project_name) = &args.project {
-        // Use project name - need to resolve to ID
-        use crate::interactive::InteractivePrompter;
-        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
-        match prompter.resolve_project(project_name).await {
-            Ok(id) => id,
-            Err(e) => {
-                cli_output.error(&format!("Failed to resolve project '{project_name}': {e}"));
-                std::process::exit(1);
-            }
-        }
-    } else {
-        args.project_id.clone()
-    };
+    let project_id = resolve_project_to_id(
+        client,
+        &cli_output,
+        args.project.as_deref(),
+        args.project_id.clone(),
+    )
+    .await?;
 
     let input = linear_sdk::UpdateIssueInput {
         title: args.title,
@@ -709,7 +800,9 @@ async fn handle_update_command(
         state_id,
         priority: args.priority,
         project_id,
-        label_ids: None, // Future enhancement
+        label_ids,
+        estimate: args.estimate,
+        cycle_id,
     };
 
     // Show preview unless --force is used
@@ -735,6 +828,15 @@ async fn handle_update_command(
         }
         if let Some(priority) = input.priority {
             println!("  Priority: {priority}");
+        }
+        if let Some(estimate) = input.estimate {
+            println!("  Estimate: {estimate}");
+        }
+        if let Some(ref label_ids) = input.label_ids {
+            println!("  Labels: {} label(s)", label_ids.len());
+        }
+        if let Some(ref cycle_id) = input.cycle_id {
+            println!("  Cycle: {cycle_id}");
         }
         println!();
 
@@ -813,6 +915,8 @@ async fn handle_close_command(
         priority: None,
         project_id: None,
         label_ids: None,
+        estimate: None,
+        cycle_id: None,
     };
 
     let spinner = SpinnerGuard::new("Closing issue...", is_interactive);
@@ -873,6 +977,8 @@ async fn handle_reopen_command(
         priority: None,
         project_id: None,
         label_ids: None,
+        estimate: None,
+        cycle_id: None,
     };
 
     let spinner = SpinnerGuard::new("Reopening issue...", is_interactive);
@@ -949,6 +1055,48 @@ async fn handle_comment_command(
             } else {
                 // Non-interactive: just print the comment ID for scripting
                 println!("{}", created_comment.id);
+            }
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_attach_command(
+    client: &LinearClient,
+    id: String,
+    url: String,
+    title: Option<String>,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let cli_output = CliOutput::with_color(use_color);
+
+    // Resolve issue identifier to UUID
+    let issue = client.get_issue(id.clone()).await?;
+
+    let input = linear_sdk::CreateAttachmentInput {
+        issue_id: issue.id.clone(),
+        url: url.clone(),
+        title,
+    };
+
+    let spinner = SpinnerGuard::new("Attaching URL...", is_interactive);
+    match client.create_attachment(input).await {
+        Ok(attachment) => {
+            drop(spinner);
+
+            if is_interactive {
+                cli_output.success(&format!("Attached URL to issue {}", issue.identifier));
+                println!("URL: {}", attachment.url);
+                println!("Title: {}", attachment.title);
+            } else {
+                println!("{}", attachment.id);
             }
         }
         Err(e) => {
@@ -1210,6 +1358,9 @@ async fn run_async_commands(
             team,
             assignee,
             priority,
+            estimate,
+            labels,
+            cycle,
             project,
             project_id,
             from_file,
@@ -1222,6 +1373,9 @@ async fn run_async_commands(
                 team,
                 assignee,
                 priority,
+                estimate,
+                labels,
+                cycle,
                 project,
                 project_id,
                 from_file,
@@ -1279,6 +1433,9 @@ async fn run_async_commands(
             assignee,
             status,
             priority,
+            estimate,
+            labels,
+            cycle,
             project,
             project_id,
             force,
@@ -1292,6 +1449,9 @@ async fn run_async_commands(
                     assignee,
                     status,
                     priority,
+                    estimate,
+                    labels,
+                    cycle,
                     project,
                     project_id,
                     force,
@@ -1309,6 +1469,9 @@ async fn run_async_commands(
         }
         Commands::Comment { id, message } => {
             handle_comment_command(&client, id, message, use_color, is_interactive).await?;
+        }
+        Commands::Attach { id, url, title } => {
+            handle_attach_command(&client, id, url, title, use_color, is_interactive).await?;
         }
         Commands::Projects {
             limit,
@@ -1643,6 +1806,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1676,6 +1840,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1709,6 +1874,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1742,6 +1908,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1775,6 +1942,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1924,6 +2092,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1955,6 +2124,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -1986,6 +2156,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2027,6 +2198,7 @@ mod tests {
             Commands::Close { .. } => panic!("Expected Issues command"),
             Commands::Reopen { .. } => panic!("Expected Issues command"),
             Commands::Comment { .. } => panic!("Expected Issues command"),
+            Commands::Attach { .. } => panic!("Expected Issues command"),
             Commands::Projects { .. } => panic!("Expected Issues command"),
             Commands::Teams { .. } => panic!("Expected Issues command"),
             Commands::Comments { .. } => panic!("Expected Issues command"),
@@ -2524,6 +2696,9 @@ mod tests {
             team: Some("ENG".to_string()),
             assignee: Some("me".to_string()),
             priority: Some(2),
+            estimate: None,
+            labels: vec![],
+            cycle: None,
             project: None,
             project_id: None,
             from_file: None,

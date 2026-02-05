@@ -87,6 +87,7 @@ pub struct InteractiveCreateInput {
     pub team_id: String,
     pub assignee_id: Option<String>,
     pub priority: Option<i64>,
+    pub estimate: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +97,7 @@ pub struct CreateOptions {
     pub team: Option<String>,
     pub assignee: Option<String>,
     pub priority: Option<i64>,
+    pub estimate: Option<i64>,
 }
 
 pub struct InteractivePrompter<'a> {
@@ -288,6 +290,7 @@ impl<'a> InteractivePrompter<'a> {
             team_id,
             assignee_id,
             priority,
+            estimate: options.estimate,
         })
     }
 

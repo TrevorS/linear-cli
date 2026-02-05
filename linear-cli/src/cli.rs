@@ -95,6 +95,18 @@ pub enum Commands {
         #[arg(long, conflicts_with = "project")]
         project_id: Option<String>,
 
+        /// Estimate points for the issue
+        #[arg(long)]
+        estimate: Option<i64>,
+
+        /// Label to apply (can be specified multiple times)
+        #[arg(long = "label", action = clap::ArgAction::Append)]
+        labels: Vec<String>,
+
+        /// Cycle to assign (use "current" for active cycle, or cycle number/name)
+        #[arg(long)]
+        cycle: Option<String>,
+
         /// Create issue from markdown file with frontmatter
         #[arg(long, short = 'f', value_name = "FILE")]
         from_file: Option<String>,
@@ -131,6 +143,18 @@ pub enum Commands {
         /// New priority (1=Urgent, 2=High, 3=Normal, 4=Low)
         #[arg(long, value_parser = clap::value_parser!(i64).range(1..=4))]
         priority: Option<i64>,
+
+        /// Estimate points for the issue
+        #[arg(long)]
+        estimate: Option<i64>,
+
+        /// Label to apply (can be specified multiple times, replaces existing labels)
+        #[arg(long = "label", action = clap::ArgAction::Append)]
+        labels: Vec<String>,
+
+        /// Cycle to assign (use "current" for active cycle, or cycle number/name)
+        #[arg(long)]
+        cycle: Option<String>,
 
         /// Project name to assign the issue to (use "none" to remove)
         #[arg(long)]
@@ -276,6 +300,19 @@ pub enum Commands {
         /// Include archived results
         #[arg(long)]
         include_archived: bool,
+    },
+    /// Attach a URL to an issue (e.g., a pull request)
+    Attach {
+        /// Issue identifier (e.g., ENG-123)
+        id: String,
+
+        /// URL to attach
+        #[arg(long)]
+        url: String,
+
+        /// Optional title for the attachment
+        #[arg(long)]
+        title: Option<String>,
     },
     /// Generate shell completions
     Completions {

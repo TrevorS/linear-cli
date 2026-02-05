@@ -1,0 +1,21 @@
+query ListTeamCycles($teamId: String!) {
+  team(id: $teamId) {
+    id
+    activeCycle {
+      id
+      number
+      name
+      startsAt
+      endsAt
+    }
+    cycles(first: 50, orderBy: createdAt) {
+      nodes {
+        id
+        number
+        name
+        startsAt
+        endsAt
+      }
+    }
+  }
+}

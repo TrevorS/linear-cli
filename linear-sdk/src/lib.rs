@@ -37,6 +37,8 @@ type Duration = String;
 type DateTime = String;
 #[allow(clippy::upper_case_acronyms)]
 type JSON = serde_json::Value;
+#[allow(clippy::upper_case_acronyms)]
+type JSONObject = serde_json::Value;
 
 #[cfg(test)]
 pub mod test_helpers;
@@ -130,6 +132,36 @@ pub struct CreateComment;
     skip_serializing_none
 )]
 pub struct ListTeamStates;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/team_labels.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeamLabels;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/queries/team_cycles.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct ListTeamCycles;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.json",
+    query_path = "graphql/mutations/create_attachment.graphql",
+    response_derives = "Debug, Clone",
+    variables_derives = "Debug, Clone",
+    skip_serializing_none
+)]
+pub struct CreateAttachment;
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -290,6 +322,8 @@ pub struct CreateIssueInput {
     pub priority: Option<i64>,
     pub label_ids: Option<Vec<String>>,
     pub project_id: Option<String>,
+    pub estimate: Option<i64>,
+    pub cycle_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -301,12 +335,29 @@ pub struct UpdateIssueInput {
     pub priority: Option<i64>,
     pub label_ids: Option<Vec<String>>,
     pub project_id: Option<String>,
+    pub estimate: Option<i64>,
+    pub cycle_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CreateCommentInput {
     pub body: String,
     pub issue_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAttachmentInput {
+    pub issue_id: String,
+    pub url: String,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreatedAttachment {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1026,7 +1077,7 @@ impl LinearClient {
                 project_milestone_id: None,
                 parent_id: None,
                 due_date: None,
-                estimate: None,
+                estimate: input.estimate,
                 sort_order: None,
                 create_as_user: None,
                 display_icon_url: None,
@@ -1034,7 +1085,7 @@ impl LinearClient {
                 template_id: None,
                 completed_at: None,
                 created_at: None,
-                cycle_id: None,
+                cycle_id: input.cycle_id,
                 sla_breaches_at: None,
                 sla_started_at: None,
                 id: None,
@@ -1502,11 +1553,11 @@ impl LinearClient {
                 project_milestone_id: None,
                 parent_id: None,
                 due_date: None,
-                estimate: None,
+                estimate: input.estimate,
                 sort_order: None,
                 added_label_ids: None,
                 removed_label_ids: None,
-                cycle_id: None,
+                cycle_id: input.cycle_id,
                 sla_breaches_at: None,
                 sla_started_at: None,
                 snoozed_until_at: None,
@@ -1696,6 +1747,172 @@ impl LinearClient {
             states,
             default_issue_state,
             marked_as_duplicate_workflow_state,
+        })
+    }
+
+    pub async fn resolve_label_names_to_ids(
+        &self,
+        team_id: &str,
+        label_names: &[String],
+    ) -> Result<Vec<String>> {
+        let variables = list_team_labels::Variables {
+            team_id: team_id.to_string(),
+        };
+
+        let data = self.execute_graphql::<ListTeamLabels, _>(variables).await?;
+
+        // Collect all available labels (team + workspace), deduplicating by ID
+        let mut all_labels: Vec<(String, String)> = data
+            .team
+            .labels
+            .nodes
+            .into_iter()
+            .map(|l| (l.id, l.name))
+            .collect();
+
+        for label in data.issue_labels.nodes {
+            if !all_labels.iter().any(|(id, _)| *id == label.id) {
+                all_labels.push((label.id, label.name));
+            }
+        }
+
+        // Resolve each requested label name to its ID
+        label_names
+            .iter()
+            .map(|name| {
+                all_labels
+                    .iter()
+                    .find(|(_, label_name)| label_name.eq_ignore_ascii_case(name))
+                    .map(|(id, _)| id.clone())
+                    .ok_or_else(|| {
+                        let available: Vec<&str> =
+                            all_labels.iter().map(|(_, n)| n.as_str()).collect();
+                        LinearError::InvalidInput {
+                            message: format!(
+                                "Label '{}' not found. Available labels: {}",
+                                name,
+                                available.join(", ")
+                            ),
+                        }
+                    })
+            })
+            .collect()
+    }
+
+    pub async fn resolve_cycle_to_id(&self, team_id: &str, cycle_input: &str) -> Result<String> {
+        let variables = list_team_cycles::Variables {
+            team_id: team_id.to_string(),
+        };
+
+        let data = self.execute_graphql::<ListTeamCycles, _>(variables).await?;
+
+        let team = data.team;
+
+        // Handle special "current"/"active" keyword
+        let input_lower = cycle_input.to_lowercase();
+        if input_lower == "current" || input_lower == "active" {
+            return match team.active_cycle {
+                Some(cycle) => Ok(cycle.id),
+                None => Err(LinearError::InvalidInput {
+                    message: "No active cycle found for this team".to_string(),
+                }),
+            };
+        }
+
+        // Check if input looks like a UUID
+        if cycle_input
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-')
+            && cycle_input.len() > 20
+        {
+            return Ok(cycle_input.to_string());
+        }
+
+        let format_available_cycles = || -> String {
+            team.cycles
+                .nodes
+                .iter()
+                .map(|c| {
+                    format!(
+                        "#{} ({})",
+                        c.number as i64,
+                        c.name.as_deref().unwrap_or("unnamed")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        // Try to parse as a cycle number
+        if let Ok(num) = cycle_input.parse::<f64>() {
+            if let Some(cycle) = team.cycles.nodes.iter().find(|c| c.number == num) {
+                return Ok(cycle.id.clone());
+            }
+            return Err(LinearError::InvalidInput {
+                message: format!(
+                    "Cycle number {} not found. Available cycles: {}",
+                    num as i64,
+                    format_available_cycles()
+                ),
+            });
+        }
+
+        // Try name match (case-insensitive)
+        if let Some(cycle) = team.cycles.nodes.iter().find(|c| {
+            c.name
+                .as_ref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(cycle_input))
+        }) {
+            return Ok(cycle.id.clone());
+        }
+
+        Err(LinearError::InvalidInput {
+            message: format!(
+                "Cycle '{}' not found. Use 'current' for active cycle, a cycle number, or a cycle name. Available cycles: {}",
+                cycle_input,
+                format_available_cycles()
+            ),
+        })
+    }
+
+    pub async fn create_attachment(
+        &self,
+        input: CreateAttachmentInput,
+    ) -> Result<CreatedAttachment> {
+        let variables = create_attachment::Variables {
+            input: create_attachment::AttachmentCreateInput {
+                issue_id: input.issue_id,
+                url: input.url.clone(),
+                title: input.title.unwrap_or(input.url),
+                icon_url: None,
+                metadata: None,
+                subtitle: None,
+                id: None,
+                create_as_user: None,
+                comment_body: None,
+                comment_body_data: None,
+                group_by_source: None,
+            },
+        };
+
+        let data = self
+            .execute_graphql::<CreateAttachment, _>(variables)
+            .await?;
+
+        if !data.attachment_create.success {
+            return Err(LinearError::GraphQL {
+                message: "Attachment creation failed".to_string(),
+                errors: vec![],
+            });
+        }
+
+        let attachment = data.attachment_create.attachment;
+
+        Ok(CreatedAttachment {
+            id: attachment.id,
+            url: attachment.url,
+            title: attachment.title,
+            created_at: attachment.created_at,
         })
     }
 
@@ -2447,6 +2664,8 @@ mod tests {
             priority: Some(2),
             label_ids: Some(vec!["label-789".to_string()]),
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2497,6 +2716,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2541,6 +2762,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2578,6 +2801,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2615,6 +2840,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.create_issue(input).await;
@@ -2654,6 +2881,8 @@ mod tests {
             priority: Some(3),
             label_ids: Some(vec!["label-456".to_string()]),
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2704,6 +2933,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2739,6 +2970,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.update_issue("ENG-123".to_string(), input).await;
@@ -2776,6 +3009,8 @@ mod tests {
             priority: None,
             label_ids: None,
             project_id: None,
+            estimate: None,
+            cycle_id: None,
         };
 
         let result = client.update_issue("INVALID-123".to_string(), input).await;

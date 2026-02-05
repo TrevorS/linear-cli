@@ -1,0 +1,20 @@
+query ListTeamLabels($teamId: String!) {
+  team(id: $teamId) {
+    id
+    labels {
+      nodes {
+        id
+        name
+        color
+      }
+    }
+  }
+  issueLabels(first: 250) {
+    nodes {
+      id
+      name
+      color
+      isGroup
+    }
+  }
+}

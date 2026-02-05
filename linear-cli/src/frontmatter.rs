@@ -17,8 +17,12 @@ pub struct IssueFrontmatter {
     pub assignee: Option<String>,
     /// Priority level (1-4: Urgent, High, Normal, Low)
     pub priority: Option<i64>,
+    /// Estimate points
+    pub estimate: Option<i64>,
     /// Labels for the issue
     pub labels: Option<Vec<String>>,
+    /// Cycle (use "current" for active cycle, or cycle number/name)
+    pub cycle: Option<String>,
     /// Project name or ID
     pub project: Option<String>,
 }
@@ -100,6 +104,15 @@ pub fn parse_markdown_content(content: &str) -> Result<MarkdownFile> {
         if !(1..=4).contains(&priority) {
             return Err(anyhow!(
                 "Priority must be between 1 and 4 (1=Urgent, 2=High, 3=Normal, 4=Low), got: {priority}"
+            ));
+        }
+    }
+
+    // Validate estimate if specified
+    if let Some(estimate) = frontmatter.estimate {
+        if estimate < 0 {
+            return Err(anyhow!(
+                "Estimate must be a non-negative number, got: {estimate}"
             ));
         }
     }
@@ -433,7 +446,9 @@ This issue was loaded from a file.
             team: Some("ENG".to_string()),
             assignee: Some("me".to_string()),
             priority: Some(2),
+            estimate: None,
             labels: Some(vec!["test".to_string(), "serialization".to_string()]),
+            cycle: None,
             project: Some("Test Project".to_string()),
         };
 
@@ -452,7 +467,9 @@ This issue was loaded from a file.
                 team: Some("ENG".to_string()),
                 assignee: None,
                 priority: None,
+                estimate: None,
                 labels: None,
+                cycle: None,
                 project: None,
             },
             content: "Test content".to_string(),
@@ -464,7 +481,9 @@ This issue was loaded from a file.
                 team: Some("ENG".to_string()),
                 assignee: None,
                 priority: None,
+                estimate: None,
                 labels: None,
+                cycle: None,
                 project: None,
             },
             content: "Test content".to_string(),

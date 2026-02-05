@@ -33,6 +33,7 @@ cargo c          # check --workspace
 cargo t          # test --workspace
 cargo r -- args  # run -p linear-cli -- args
 cargo l          # clippy with -D warnings
+cargo f          # fmt --all
 cargo tsnap      # insta test --review
 ```
 
@@ -65,21 +66,47 @@ xtask/          # Build tools - schema updates
 3. **Output** (`output.rs`) formats response as table/JSON with color via `owo-colors` + `tabled`
 
 ### Key SDK Components
-- `linear-sdk/src/lib.rs`: GraphQL query definitions via `#[derive(GraphQLQuery)]`
+- `linear-sdk/src/lib.rs`: GraphQL query definitions via `#[derive(GraphQLQuery)]`, input/output structs, and `resolve_*` methods for name-to-ID resolution
 - `linear-sdk/src/error.rs`: `LinearError` enum with retryable/help_text methods
 - `linear-sdk/src/retry.rs`: Exponential backoff for transient failures
 - `linear-sdk/src/oauth.rs`: OAuth flow with keyring storage (feature-gated)
 
 ### Key CLI Components
 - `linear-cli/src/cli.rs`: Command definitions via clap derive
+- `linear-cli/src/main.rs`: Command dispatch, `CreateCommandArgs`/`UpdateCommandArgs` structs, handler functions
 - `linear-cli/src/output.rs`: `TableFormatter`, `JsonFormatter` implementing `OutputFormat` trait
 - `linear-cli/src/config.rs`: TOML config loading with XDG path hierarchy
 - `linear-cli/src/aliases.rs`: Alias expansion with cycle detection
+- `linear-cli/src/frontmatter.rs`: YAML frontmatter parsing for `--from-file` issue creation
+- `linear-cli/src/interactive.rs`: Interactive prompts (team/assignee/priority selection), `InteractiveCreateInput`/`CreateOptions` structs, project resolution
+
+### Name Resolution Pattern
+
+The SDK provides `resolve_*` methods that convert human-friendly names to Linear UUIDs. These all follow the same pattern: query the API, try case-insensitive match, return helpful error with available options on failure.
+
+- `resolve_team_key_to_id()` — team key (e.g., "ENG") → team UUID
+- `resolve_status_to_state_id()` — status name (e.g., "done") → workflow state UUID, with aliases ("completed"→"done", "backlog"→"todo")
+- `resolve_label_names_to_ids()` — label names → label UUIDs (team + workspace labels)
+- `resolve_cycle_to_id()` — "current"/"active", cycle number, or name → cycle UUID
+- `resolve_user_id()` — "me"/"self" → current user UUID
+
+When adding new resolvable fields: add a GraphQL query in `linear-sdk/graphql/queries/`, add `#[derive(GraphQLQuery)]` in `lib.rs`, implement the `resolve_*` method, wire through `CreateIssueInput`/`UpdateIssueInput`, and update the CLI args + handlers in `main.rs`.
 
 ### GraphQL Integration
 - Schema: `linear-sdk/graphql/schema.json`
-- Queries/Mutations: `linear-sdk/graphql/queries/*.graphql`, `linear-sdk/graphql/mutations/*.graphql`
+- Queries: `linear-sdk/graphql/queries/*.graphql`
+- Mutations: `linear-sdk/graphql/mutations/*.graphql`
 - Update schema: `cargo run -p xtask -- schema --api-key YOUR_KEY`
+- Custom scalar types are aliased at the top of `lib.rs` (`DateTime`, `JSON`, `JSONObject`, etc.)
+- The `graphql_client` crate generates Rust types from `.graphql` files at compile time — field types may not match intuition (e.g., cycle `number` is `f64`, not `i64`)
+
+### Adding a New Command
+
+1. Add variant to `Commands` enum in `cli.rs`
+2. Add handler function in `main.rs` (follow existing `handle_*_command` pattern)
+3. Add dispatch arm in `run_async_commands` match
+4. Add `Commands::NewCommand { .. } => panic!(...)` to all exhaustive match arms in tests
+5. If the command modifies issues, add fields to `CreateIssueInput`/`UpdateIssueInput` in `lib.rs` and wire through the mutation
 
 ## Linear API Notes
 
@@ -92,6 +119,7 @@ xtask/          # Build tools - schema updates
 - **Snapshot tests**: Use `make test-snapshots` when changing terminal output
 - **Mocked HTTP**: Tests use `mockito` for API responses
 - **Review carefully**: `.snap` files are excluded from trailing whitespace hooks
+- **Exhaustive matches**: Tests use exhaustive match arms on `Commands` enum — new variants must be added to all test match blocks
 
 ## Configuration
 
@@ -114,3 +142,4 @@ todo = ["issues", "--status", "todo", "--assignee", "me"]
 - **Keychain dialogs**: Use `LINEAR_API_KEY` in `.env`
 - **TTY detection**: Test with both `make run` and `make run-piped`
 - **Snapshot mismatch**: Run `make test-snapshots` to review changes
+- **New command breaks tests**: Add `Commands::YourCommand { .. } => panic!(...)` to all exhaustive match arms in `main.rs` tests
