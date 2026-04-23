@@ -64,7 +64,7 @@ release:
 
 # Install binary locally
 install:
-	cargo install --path linear-cli
+	cargo install --path linear-cli --locked
 
 # Clean build artifacts
 clean:
