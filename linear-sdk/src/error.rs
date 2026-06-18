@@ -93,26 +93,26 @@ pub fn format_error_with_suggestion(err: &LinearError) -> String {
 }
 
 impl LinearError {
-    pub fn help_text(&self) -> Option<&'static str> {
+    pub fn help_text(&self) -> Cow<'static, str> {
         match self {
             LinearError::Auth { .. } => {
-                Some("Get your API key from: https://linear.app/settings/api")
+                Cow::Borrowed("Get your API key from: https://linear.app/settings/api")
             }
             LinearError::IssueNotFound { .. } => {
-                Some("Please check the issue identifier format (e.g., ENG-123)")
+                Cow::Borrowed("Please check the issue identifier format (e.g., ENG-123)")
             }
-            LinearError::Network { .. } => Some("Check your internet connection and try again"),
+            LinearError::Network { .. } => Cow::Borrowed("Check your internet connection and try again"),
             LinearError::RateLimit { reset_seconds } => {
                 if *reset_seconds > 0 {
-                    return Some("Wait 60 seconds before making another request");
+                    return Cow::Owned(format!("Wait {reset_seconds} seconds before making another request"));
                 }
-                Some("Wait a moment before making another request")
+                Cow::Borrowed("Wait a moment before making another request")
             }
-            LinearError::Timeout => Some("Try again or check your network connection"),
-            LinearError::OAuthConfig => Some(
+            LinearError::Timeout => Cow::Borrowed("Try again or check your network connection"),
+            LinearError::OAuthConfig => Cow::Borrowed(
                 "Set up OAuth by creating an application at https://linear.app/settings/api/applications/new\n\nCallback URL: http://localhost:8089/callback\nThen set LINEAR_OAUTH_CLIENT_ID environment variable with your Client ID",
             ),
-            _ => None,
+            _ => Cow::Borrowed(""),
         }
     }
 
@@ -152,54 +152,73 @@ impl LinearError {
 impl From<reqwest::Error> for LinearError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
-            LinearError::Timeout
-        } else if err.is_status() {
+            return LinearError::Timeout;
+        }
+
+        if err.is_status() {
             if let Some(status) = err.status() {
-                match status.as_u16() {
-                    401 => LinearError::Auth {
-                        reason: Cow::Borrowed("Unauthorized"),
+                return match LinearError::from_status(status) {
+                    LinearError::Auth { reason, .. } => LinearError::Auth {
+                        reason,
                         source: Some(Box::new(err)),
                     },
-                    408 => LinearError::Timeout,
-                    429 => LinearError::RateLimit { reset_seconds: 0 },
-                    _ => LinearError::Network {
-                        message: err.to_string(),
-                        retryable: status.is_server_error(),
-                        source: Box::new(err),
+                    other => match other {
+                        LinearError::Network {
+                            message: _,
+                            retryable,
+                            ..
+                        } => LinearError::Network {
+                            message: err.to_string(),
+                            retryable,
+                            source: Box::new(err),
+                        },
+                        _ => other,
                     },
-                }
-            } else {
-                LinearError::Network {
-                    message: err.to_string(),
-                    retryable: false,
-                    source: Box::new(err),
-                }
+                };
             }
-        } else {
-            LinearError::Network {
-                message: err.to_string(),
-                retryable: err.is_connect() || err.is_request(),
-                source: Box::new(err),
-            }
+        }
+
+        LinearError::Network {
+            message: err.to_string(),
+            retryable: err.is_connect() || err.is_request(),
+            source: Box::new(err),
         }
     }
 }
 
 impl From<serde_json::Error> for LinearError {
-    fn from(_err: serde_json::Error) -> Self {
-        LinearError::InvalidResponse
+    fn from(err: serde_json::Error) -> Self {
+        LinearError::InvalidInput {
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Thin wrapper so anyhow::Error can be boxed as StdError + Send + Sync.
+/// anyhow::Error doesn't implement StdError directly, but its error chain is
+/// accessible via fmt::Display and its own .chain() iterator.
+#[derive(Debug)]
+pub(crate) struct AnyhowError(pub(crate) anyhow::Error);
+
+impl fmt::Display for AnyhowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl StdError for AnyhowError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        None
     }
 }
 
 impl From<anyhow::Error> for LinearError {
+    // Preserve the full anyhow error chain by boxing it directly rather than wrapping in a synthetic io::Error
     fn from(err: anyhow::Error) -> Self {
         LinearError::Network {
             message: err.to_string(),
             retryable: false,
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                err.to_string(),
-            )),
+            source: Box::new(AnyhowError(err)),
         }
     }
 }
@@ -223,7 +242,7 @@ mod tests {
         );
         assert_eq!(
             err.help_text(),
-            Some("Get your API key from: https://linear.app/settings/api")
+            Cow::Borrowed("Get your API key from: https://linear.app/settings/api")
         );
         assert!(!err.is_retryable());
     }
@@ -236,10 +255,7 @@ mod tests {
         };
 
         assert_eq!(err.to_string(), "Issue ENG-123 not found");
-        assert!(err
-            .help_text()
-            .unwrap()
-            .contains("check the issue identifier"));
+        assert!(err.help_text().contains("check the issue identifier"));
         assert!(!err.is_retryable());
 
         // Test suggestion rendering
@@ -291,7 +307,7 @@ mod tests {
         assert!(err.is_retryable());
         assert_eq!(
             err.help_text(),
-            Some("Wait 60 seconds before making another request")
+            Cow::<str>::Owned("Wait 60 seconds before making another request".to_string())
         );
     }
 
@@ -380,7 +396,7 @@ mod tests {
                 source: None
             }
             .help_text(),
-            Some("Get your API key from: https://linear.app/settings/api")
+            Cow::Borrowed("Get your API key from: https://linear.app/settings/api")
         );
         assert_eq!(
             LinearError::IssueNotFound {
@@ -388,21 +404,27 @@ mod tests {
                 suggestion: None
             }
             .help_text(),
-            Some("Please check the issue identifier format (e.g., ENG-123)")
+            Cow::Borrowed("Please check the issue identifier format (e.g., ENG-123)")
         );
-        assert_eq!(
-            LinearError::GraphQL {
-                message: "test".to_string(),
-                errors: vec![]
-            }
-            .help_text(),
-            None
-        );
-        assert!(LinearError::OAuthConfig.help_text().is_some());
+        assert!(LinearError::GraphQL {
+            message: "test".to_string(),
+            errors: vec![]
+        }
+        .help_text()
+        .is_empty());
+        assert!(!LinearError::OAuthConfig.help_text().is_empty());
         assert!(LinearError::OAuthConfig
             .help_text()
-            .unwrap()
             .contains("linear.app/settings/api/applications/new"));
+    }
+
+    #[test]
+    fn test_rate_limit_help_text_varies() {
+        let err = LinearError::RateLimit { reset_seconds: 120 };
+        assert!(err.help_text().contains("120"));
+
+        let err_zero = LinearError::RateLimit { reset_seconds: 0 };
+        assert!(err_zero.help_text().contains("a moment"));
     }
 
     #[test]
@@ -433,16 +455,16 @@ mod tests {
     }
 
     #[test]
-    fn test_from_reqwest_error() {
-        // Since we can't easily create specific reqwest errors in tests,
-        // we'll test the conversion logic conceptually
-        assert!(LinearError::Network {
-            message: "test".to_string(),
-            retryable: true,
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "test"))
-        }
-        .is_retryable());
-        assert!(LinearError::Timeout.is_retryable());
-        assert!(LinearError::RateLimit { reset_seconds: 0 }.is_retryable());
+    fn test_from_serde_json_error_preserves_message() {
+        let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let err = LinearError::from(json_err);
+        assert!(matches!(err, LinearError::InvalidInput { .. }));
+        // Message should contain details from the serde error (not empty)
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("Invalid API response format"),
+            "Old message found: {msg}"
+        );
+        assert!(msg.len() > 30, "Message too short (no details): {msg}");
     }
 }

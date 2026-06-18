@@ -122,6 +122,10 @@ impl SearchQuery {
 pub async fn search(client: &LinearClient, options: SearchOptions) -> Result<SearchResult> {
     let parsed_query = SearchQuery::parse(&options.query);
 
+    // Warn if parsed filters are silently ignored
+    if !parsed_query.exclusions.is_empty() || !parsed_query.field_searches.is_empty() {
+        eprintln!("Warning: search exclusions (-term) and field filters (key:value) are not yet supported");
+    }
     // For now, implement basic text search
     // In future iterations, we'll add field search and exclusion support
     let search_text = if !parsed_query.text.is_empty() {

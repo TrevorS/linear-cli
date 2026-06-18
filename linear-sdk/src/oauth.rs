@@ -101,8 +101,12 @@ impl OAuthManager {
             .client
             .authorize_url(CsrfToken::new_random)
             .set_pkce_challenge(pkce_challenge)
-            .add_scope(Scope::new("read".into()))
-            .add_scope(Scope::new("write".into()))
+            // Linear expects a comma-separated scope list. The oauth2 crate joins
+            // multiple add_scope() calls with spaces (RFC 6749), which Linear fails
+            // to parse — it then falls back to the app's default scopes and the token
+            // silently lacks `write` (issueRelationCreate etc. 403 with "write required").
+            // Send a single comma-delimited scope instead.
+            .add_scope(Scope::new("read,write".into()))
             .url();
 
         // Step 2: open browser

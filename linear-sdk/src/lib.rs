@@ -47,7 +47,7 @@ pub mod test_helpers;
 #[graphql(
     schema_path = "graphql/schema.json",
     query_path = "graphql/queries/viewer.graphql",
-    response_derives = "Debug",
+    response_derives = "Debug, Clone",
     variables_derives = "Debug, Clone",
     skip_serializing_none
 )]
@@ -644,7 +644,7 @@ impl LinearClient {
         let client = client_builder.build().map_err(LinearError::from)?;
 
         let retry_config = retry::RetryConfig {
-            max_retries: config.max_retries as u32,
+            max_attempts: config.max_attempts as u32,
             initial_delay: std::time::Duration::from_millis(100),
             max_delay: std::time::Duration::from_secs(10),
             backoff_multiplier: 2.0,
@@ -708,9 +708,22 @@ impl LinearClient {
 
                 // Check for HTTP error status codes
                 if !response.status().is_success() {
-                    return Err(LinearError::from_status(
-                        http::StatusCode::from_u16(response.status().as_u16()).unwrap(),
-                    ));
+                    let status = response.status();
+                    // Capture the response body so API errors (e.g. scope/validation
+                    // failures) surface instead of a bare "HTTP error: 400".
+                    let body = response.text().await.unwrap_or_default();
+                    let mut err = LinearError::from_status(
+                        http::StatusCode::from_u16(status.as_u16()).unwrap(),
+                    );
+                    if let LinearError::Network {
+                        ref mut message, ..
+                    } = err
+                    {
+                        if !body.trim().is_empty() {
+                            *message = format!("HTTP error: {status}: {body}");
+                        }
+                    }
+                    return Err(err);
                 }
 
                 let response_body: Response<Q::ResponseData> =
@@ -2214,7 +2227,7 @@ mod tests {
             .mock("POST", "/graphql")
             .with_status(408)
             .with_body("Request Timeout")
-            .expect(4)  // 1 initial + 3 retries
+            .expect(3)  // 3 total attempts
             .create();
 
         let client = LinearClient::builder()

@@ -24,7 +24,7 @@ pub struct LinearClientConfig {
     pub proxy: Option<reqwest::Proxy>,
 
     #[builder(default = 3)]
-    pub max_retries: usize,
+    pub max_attempts: usize,
 
     #[builder(default = None)]
     pub base_url: Option<String>,
@@ -67,7 +67,7 @@ pub struct TypedLinearClientBuilder<State = Initial> {
     verbose: bool,
     timeout: Duration,
     proxy: Option<reqwest::Proxy>,
-    max_retries: usize,
+    max_attempts: usize,
     base_url: Option<String>,
     _state: PhantomData<State>,
 }
@@ -86,7 +86,7 @@ impl TypedLinearClientBuilder<Initial> {
             verbose: false,
             timeout: Duration::from_secs(30),
             proxy: None,
-            max_retries: 3,
+            max_attempts: 3,
             base_url: None,
             _state: PhantomData,
         }
@@ -99,7 +99,7 @@ impl TypedLinearClientBuilder<Initial> {
             verbose: self.verbose,
             timeout: self.timeout,
             proxy: self.proxy,
-            max_retries: self.max_retries,
+            max_attempts: self.max_attempts,
             base_url: self.base_url,
             _state: PhantomData,
         }
@@ -118,18 +118,12 @@ impl<State> TypedLinearClientBuilder<State> {
     }
 
     pub fn proxy(mut self, url: &str) -> Result<Self, LinearError> {
-        let parsed_url = Url::parse(url)
-            .map_err(|e| LinearError::Configuration(format!("Invalid proxy URL: {e}")))?;
-
-        let proxy = reqwest::Proxy::all(parsed_url.as_str())
-            .map_err(|e| LinearError::Configuration(format!("Invalid proxy configuration: {e}")))?;
-
-        self.proxy = Some(proxy);
+        self.proxy = Some(LinearClient::create_proxy(url)?);
         Ok(self)
     }
 
-    pub fn max_retries(mut self, max_retries: usize) -> Self {
-        self.max_retries = max_retries;
+    pub fn max_attempts(mut self, max_attempts: usize) -> Self {
+        self.max_attempts = max_attempts;
         self
     }
 
@@ -146,7 +140,7 @@ impl TypedLinearClientBuilder<WithAuth> {
             verbose: self.verbose,
             timeout: self.timeout,
             proxy: self.proxy,
-            max_retries: self.max_retries,
+            max_attempts: self.max_attempts,
             base_url: self.base_url,
         };
 
@@ -178,7 +172,7 @@ mod tests {
             .auth_token(api_key)
             .verbose(true)
             .timeout(Duration::from_secs(60))
-            .max_retries(5)
+            .max_attempts(5)
             .build();
 
         assert!(client_result.is_ok());

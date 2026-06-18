@@ -9,7 +9,7 @@ use tokio::time::sleep;
 
 #[derive(Clone)]
 pub struct RetryConfig {
-    pub max_retries: u32,
+    pub max_attempts: u32,
     pub initial_delay: Duration,
     pub max_delay: Duration,
     pub backoff_multiplier: f64,
@@ -18,7 +18,7 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: retry::MAX_RETRIES,
+            max_attempts: retry::MAX_ATTEMPTS,
             initial_delay: retry::INITIAL_DELAY,
             max_delay: retry::MAX_DELAY,
             backoff_multiplier: retry::BACKOFF_MULTIPLIER,
@@ -36,15 +36,14 @@ where
     Fut: std::future::Future<Output = Result<T, LinearError>>,
 {
     let mut delay = config.initial_delay;
-    let mut last_error = None;
 
-    for attempt in 0..=config.max_retries {
+    for attempt in 0..config.max_attempts {
         if attempt > 0 {
             if verbose {
                 log::debug!(
                     "Retrying operation (attempt {}/{})",
-                    attempt,
-                    config.max_retries
+                    attempt + 1,
+                    config.max_attempts
                 );
             }
             sleep(delay).await;
@@ -59,26 +58,18 @@ where
         match operation().await {
             Ok(result) => return Ok(result),
             Err(error) => {
-                if !error.is_retryable() || attempt == config.max_retries {
+                if !error.is_retryable() || attempt == config.max_attempts - 1 {
                     return Err(error);
                 }
 
                 if verbose {
                     log::debug!("Request failed (retryable): {error}");
                 }
-                last_error = Some(error);
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| LinearError::Network {
-        message: "Retry failed".to_string(),
-        retryable: false,
-        source: Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Retry failed",
-        )),
-    }))
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -167,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn test_retry_max_attempts_exceeded() {
         let config = RetryConfig {
-            max_retries: 2,
+            max_attempts: 3,
             ..Default::default()
         };
         let call_count = Arc::new(Mutex::new(0));

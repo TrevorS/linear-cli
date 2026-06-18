@@ -3,6 +3,7 @@
 
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
+use linear_sdk::constants::status::{DEFAULT_DONE_STATE, DEFAULT_TODO_STATE};
 use linear_sdk::{IssueFilters, LinearClient, LinearError, Result};
 use owo_colors::OwoColorize;
 use secrecy::SecretString;
@@ -21,6 +22,8 @@ mod output;
 mod preferences;
 mod search;
 mod templates;
+#[cfg(test)]
+mod tests;
 mod types;
 
 use crate::aliases::AliasExpander;
@@ -76,7 +79,8 @@ fn display_error(error: &LinearError, use_color: bool) {
     let cli = CliOutput::with_color(use_color);
     cli.error(&error.to_string());
 
-    if let Some(help) = error.help_text() {
+    let help = error.help_text();
+    if !help.is_empty() {
         eprintln!();
         eprintln!("{help}");
     }
@@ -153,6 +157,45 @@ async fn resolve_team_to_id(client: &LinearClient, team: &str) -> Result<String>
 
     // Resolve as team key
     client.resolve_team_key_to_id(team).await
+}
+
+/// Resolve a team name/key to an ID, exiting with an error message on failure.
+async fn resolve_team_or_exit(
+    client: &LinearClient,
+    cli_output: &CliOutput,
+    team: Option<String>,
+    required_msg: &str,
+) -> String {
+    let team = match team {
+        Some(t) => t,
+        None => {
+            cli_output.error(required_msg);
+            std::process::exit(1);
+        }
+    };
+    match resolve_team_to_id(client, &team).await {
+        Ok(id) => id,
+        Err(e) => {
+            cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Resolve an assignee name to an ID, exiting with an error message on failure.
+async fn resolve_assignee_or_exit(
+    client: &LinearClient,
+    cli_output: &CliOutput,
+    assignee: Option<String>,
+) -> Option<String> {
+    let assignee = assignee.unwrap_or_else(|| "me".to_string());
+    match resolve_assignee_to_id(client, Some(assignee)).await {
+        Ok(id) => id,
+        Err(e) => {
+            cli_output.error(&format!("Failed to resolve assignee: {e}"));
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Fields used for dry-run preview output when creating an issue
@@ -235,7 +278,7 @@ async fn resolve_project_to_id(
 ) -> Result<Option<String>> {
     if let Some(name) = project_name {
         use crate::interactive::InteractivePrompter;
-        let prompter = InteractivePrompter::new_with_defaults(client).unwrap();
+        let prompter = InteractivePrompter::new(client).unwrap();
         match prompter.resolve_project(name).await {
             Ok(id) => Ok(id),
             Err(e) => {
@@ -420,27 +463,15 @@ async fn handle_create_from_file(
         std::process::exit(1);
     }
 
-    let team_id = match team {
-        Some(team) => match resolve_team_to_id(client, &team).await {
-            Ok(team_id) => team_id,
-            Err(e) => {
-                cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
-                std::process::exit(1);
-            }
-        },
-        None => {
-            cli_output.error("Team is required (specify in frontmatter or use --team)");
-            std::process::exit(1);
-        }
-    };
+    let team_id = resolve_team_or_exit(
+        client,
+        &cli_output,
+        team,
+        "Team is required (specify in frontmatter or use --team)",
+    )
+    .await;
 
-    let assignee_id = match resolve_assignee_to_id(client, assignee).await {
-        Ok(id) => id,
-        Err(e) => {
-            cli_output.error(&format!("Failed to resolve assignee: {e}"));
-            std::process::exit(1);
-        }
-    };
+    let assignee_id = resolve_assignee_or_exit(client, &cli_output, assignee).await;
 
     let input = crate::interactive::InteractiveCreateInput {
         title,
@@ -539,7 +570,7 @@ async fn handle_create_command(
 
     let input = if needs_prompts && is_interactive {
         // Interactive mode with Phase 5 smart defaults and templates
-        let prompter = match InteractivePrompter::new_with_defaults(client) {
+        let prompter = match InteractivePrompter::new(client) {
             Ok(prompter) => prompter,
             Err(e) => {
                 cli_output.error(&format!("Failed to initialize interactive prompter: {e}"));
@@ -581,29 +612,15 @@ async fn handle_create_command(
                 std::process::exit(1);
             }
         };
+        let team_id = resolve_team_or_exit(
+            client,
+            &cli_output,
+            args.team,
+            "Team is required for issue creation",
+        )
+        .await;
 
-        let team_id = match args.team {
-            Some(team) => match resolve_team_to_id(client, &team).await {
-                Ok(team_id) => team_id,
-                Err(e) => {
-                    cli_output.error(&format!("Failed to resolve team '{team}': {e}"));
-                    std::process::exit(1);
-                }
-            },
-            None => {
-                cli_output.error("Team is required for issue creation");
-                eprintln!("Use --team TEAM_KEY or run without arguments for interactive mode");
-                std::process::exit(1);
-            }
-        };
-
-        let assignee_id = match resolve_assignee_to_id(client, args.assignee).await {
-            Ok(id) => id,
-            Err(e) => {
-                cli_output.error(&format!("Failed to resolve assignee: {e}"));
-                std::process::exit(1);
-            }
-        };
+        let assignee_id = resolve_assignee_or_exit(client, &cli_output, args.assignee).await;
 
         crate::interactive::InteractiveCreateInput {
             title,
@@ -880,9 +897,11 @@ async fn handle_update_command(
     Ok(())
 }
 
-async fn handle_close_command(
+async fn handle_status_change(
     client: &LinearClient,
     id: String,
+    action: &str,
+    status_name: &str,
     force: bool,
     use_color: bool,
     is_interactive: bool,
@@ -891,27 +910,33 @@ async fn handle_close_command(
 
     // Show preview unless --force is used
     if !force && is_interactive {
-        println!("Would close issue: {id}");
+        println!("Would {action} issue: {id}");
         println!();
 
-        if !confirm_action("close", false, true) {
-            cli_output.info("Close cancelled");
+        if !confirm_action(action, false, true) {
+            let cancel_msg = if action == "close" {
+                "Close cancelled"
+            } else {
+                "Reopen cancelled"
+            };
+            cli_output.info(cancel_msg);
             return Ok(());
         }
     }
 
-    // Get the issue first to determine its team, then resolve the "Done" state ID
+    // Get the issue first to determine its team, then resolve the target state ID
     let issue = client.get_issue(id.clone()).await?;
     let team_id = issue.team.as_ref().unwrap().id.clone();
 
-    // Resolve "Done" status to the actual state ID for this team
-    let done_state_id = client.resolve_status_to_state_id(&team_id, "Done").await?;
+    let target_state_id = client
+        .resolve_status_to_state_id(&team_id, status_name)
+        .await?;
 
     let input = linear_sdk::UpdateIssueInput {
         title: None,
         description: None,
         assignee_id: None,
-        state_id: Some(done_state_id),
+        state_id: Some(target_state_id),
         priority: None,
         project_id: None,
         label_ids: None,
@@ -919,13 +944,22 @@ async fn handle_close_command(
         cycle_id: None,
     };
 
-    let spinner = SpinnerGuard::new("Closing issue...", is_interactive);
+    let (success_msg, spinner_msg) = if action == "close" {
+        ("Closed", "Closing issue...")
+    } else {
+        ("Reopened", "Reopening issue...")
+    };
+
+    let spinner = SpinnerGuard::new(spinner_msg, is_interactive);
     match client.update_issue(id.clone(), input).await {
         Ok(updated_issue) => {
             drop(spinner);
 
             if is_interactive {
-                cli_output.success(&format!("Closed issue: {}", updated_issue.identifier));
+                cli_output.success(&format!(
+                    "{success_msg} issue: {}",
+                    updated_issue.identifier
+                ));
                 println!("Status: {}", updated_issue.state.name);
                 println!("URL: {}", updated_issue.url);
             } else {
@@ -940,6 +974,25 @@ async fn handle_close_command(
     }
 
     Ok(())
+}
+
+async fn handle_close_command(
+    client: &LinearClient,
+    id: String,
+    force: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    handle_status_change(
+        client,
+        id,
+        "close",
+        DEFAULT_DONE_STATE,
+        force,
+        use_color,
+        is_interactive,
+    )
+    .await
 }
 
 async fn handle_reopen_command(
@@ -949,61 +1002,17 @@ async fn handle_reopen_command(
     use_color: bool,
     is_interactive: bool,
 ) -> Result<()> {
-    let cli_output = CliOutput::with_color(use_color);
-
-    // Show preview unless --force is used
-    if !force && is_interactive {
-        println!("Would reopen issue: {id}");
-        println!();
-
-        if !confirm_action("reopen", false, true) {
-            cli_output.info("Reopen cancelled");
-            return Ok(());
-        }
-    }
-
-    // Get the issue first to determine its team, then resolve the "Todo" state ID
-    let issue = client.get_issue(id.clone()).await?;
-    let team_id = issue.team.as_ref().unwrap().id.clone();
-
-    // Resolve "Todo" status to the actual state ID for this team (uses default issue state)
-    let todo_state_id = client.resolve_status_to_state_id(&team_id, "Todo").await?;
-
-    let input = linear_sdk::UpdateIssueInput {
-        title: None,
-        description: None,
-        assignee_id: None,
-        state_id: Some(todo_state_id),
-        priority: None,
-        project_id: None,
-        label_ids: None,
-        estimate: None,
-        cycle_id: None,
-    };
-
-    let spinner = SpinnerGuard::new("Reopening issue...", is_interactive);
-    match client.update_issue(id.clone(), input).await {
-        Ok(updated_issue) => {
-            drop(spinner);
-
-            if is_interactive {
-                cli_output.success(&format!("Reopened issue: {}", updated_issue.identifier));
-                println!("Status: {}", updated_issue.state.name);
-                println!("URL: {}", updated_issue.url);
-            } else {
-                println!("{}", updated_issue.identifier);
-            }
-        }
-        Err(e) => {
-            drop(spinner);
-            display_error(&e, use_color);
-            std::process::exit(1);
-        }
-    }
-
-    Ok(())
+    handle_status_change(
+        client,
+        id,
+        "reopen",
+        DEFAULT_TODO_STATE,
+        force,
+        use_color,
+        is_interactive,
+    )
+    .await
 }
-
 async fn handle_comment_command(
     client: &LinearClient,
     id: String,
@@ -1018,6 +1027,11 @@ async fn handle_comment_command(
         msg
     } else {
         // Read from stdin
+        use std::io::IsTerminal as _;
+        if std::io::stdin().is_terminal() {
+            cli_output.error("No message provided. Use --message TEXT or pipe content to stdin.");
+            std::process::exit(1);
+        }
         use std::io::Read;
         let mut buffer = String::new();
         if let Err(e) = std::io::stdin().read_to_string(&mut buffer) {
@@ -1027,7 +1041,7 @@ async fn handle_comment_command(
 
         if buffer.trim().is_empty() {
             cli_output.error("Comment body cannot be empty");
-            eprintln!("Provide a message argument or pipe content to stdin");
+            cli_output.error("Provide a message argument or pipe content to stdin");
             std::process::exit(1);
         }
 
@@ -1196,6 +1210,447 @@ async fn handle_relate_command(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn handle_issues_command(
+    client: &LinearClient,
+    limit: i32,
+    json: bool,
+    pretty: bool,
+    assignee: Option<String>,
+    status: Option<String>,
+    team: Option<String>,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let filters = if assignee.is_some() || status.is_some() || team.is_some() {
+        Some(IssueFilters {
+            assignee,
+            status,
+            team,
+        })
+    } else {
+        None
+    };
+
+    let spinner = SpinnerGuard::new("Fetching issues...", is_interactive);
+    let issues = match client.list_issues_filtered(limit, filters).await {
+        Ok(issues) => {
+            drop(spinner);
+            issues
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    if issues.is_empty() && !json && is_interactive {
+        println!("No issues found.");
+    } else if !issues.is_empty() {
+        let output = if json {
+            let formatter = JsonFormatter::new(pretty);
+            match formatter.format_issues(&issues) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            let formatter = TableFormatter::new_with_interactive(use_color, is_interactive);
+            match formatter.format_issues(&issues) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&e, use_color);
+                    std::process::exit(1);
+                }
+            }
+        };
+        println!("{output}");
+    }
+
+    Ok(())
+}
+
+async fn handle_issue_detail_command(
+    client: &LinearClient,
+    id: String,
+    json: bool,
+    raw: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new(&format!("Fetching issue {id}..."), is_interactive);
+    match client.get_issue(id).await {
+        Ok(issue) => {
+            drop(spinner);
+            let output = if json {
+                let formatter = JsonFormatter::new(false);
+                match formatter.format_detailed_issue(&issue) {
+                    Ok(output) => output,
+                    Err(e) => {
+                        display_error(&e, use_color);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                let formatter = TableFormatter::new_with_interactive(use_color, is_interactive);
+                let use_rich_formatting = is_interactive && !raw;
+
+                match formatter.format_detailed_issue_rich(&issue, use_rich_formatting) {
+                    Ok(output) => output,
+                    Err(e) => {
+                        display_error(&e, use_color);
+                        std::process::exit(1);
+                    }
+                }
+            };
+            println!("{output}");
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_status_command(
+    client: &LinearClient,
+    verbose: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new("Checking Linear connection...", is_interactive);
+    match client.execute_viewer_query().await {
+        Ok(viewer_data) => {
+            drop(spinner);
+            if is_interactive {
+                if use_color {
+                    println!("{} Connected to Linear", "✓".green());
+                } else {
+                    println!("✓ Connected to Linear");
+                }
+
+                if verbose {
+                    println!();
+                    println!(
+                        "User: {} ({})",
+                        viewer_data.viewer.name, viewer_data.viewer.email
+                    );
+                    println!("User ID: {}", viewer_data.viewer.id);
+                }
+            }
+        }
+        Err(e) => {
+            drop(spinner);
+            if is_interactive {
+                if use_color {
+                    println!("{} Failed to connect to Linear", "✗".red());
+                } else {
+                    println!("✗ Failed to connect to Linear");
+                }
+                println!();
+            }
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_projects_command(
+    client: &LinearClient,
+    limit: i32,
+    json: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new("Fetching projects...", is_interactive);
+    let projects = match client.list_projects(limit).await {
+        Ok(projects) => {
+            drop(spinner);
+            projects
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    if projects.is_empty() && !json && is_interactive {
+        println!("No projects found.");
+    } else if !projects.is_empty() {
+        let output = if json {
+            match serde_json::to_string_pretty(&projects) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            projects
+                .iter()
+                .map(|p| format!("{}: {} ({})", p.id, p.name, p.state))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        println!("{output}");
+    }
+
+    Ok(())
+}
+
+async fn handle_teams_command(
+    client: &LinearClient,
+    json: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new("Fetching teams...", is_interactive);
+    let teams = match client.list_teams().await {
+        Ok(teams) => {
+            drop(spinner);
+            teams
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    if teams.is_empty() && !json && is_interactive {
+        println!("No teams found.");
+    } else if !teams.is_empty() {
+        let output = if json {
+            match serde_json::to_string_pretty(&teams) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            teams
+                .iter()
+                .map(|t| format!("{}: {} ({} members)", t.key, t.name, t.members.len()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        println!("{output}");
+    }
+
+    Ok(())
+}
+
+async fn handle_comments_command(
+    client: &LinearClient,
+    id: String,
+    limit: i32,
+    json: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new("Fetching comments...", is_interactive);
+    let issue_with_comments = match client.get_issue_comments(&id, limit).await {
+        Ok(result) => {
+            drop(spinner);
+            result
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    if issue_with_comments.comments.is_empty() && !json && is_interactive {
+        println!("No comments found for issue {id}.");
+    } else {
+        let output = if json {
+            match serde_json::to_string_pretty(&issue_with_comments) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            format!(
+                "Issue: {} - {}\n\nComments:\n{}",
+                issue_with_comments.identifier,
+                issue_with_comments.title,
+                issue_with_comments
+                    .comments
+                    .iter()
+                    .map(|c| format!("{}: {}", c.user.name, c.body))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        println!("{output}");
+    }
+
+    Ok(())
+}
+
+async fn handle_mywork_command(
+    client: &LinearClient,
+    limit: i32,
+    json: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    let spinner = SpinnerGuard::new("Fetching your work...", is_interactive);
+    let my_work = match client.get_my_work(limit).await {
+        Ok(work) => {
+            drop(spinner);
+            work
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    let output = if json {
+        match serde_json::to_string_pretty(&my_work) {
+            Ok(output) => output,
+            Err(e) => {
+                display_error(&LinearError::from(e), use_color);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        format!(
+            "Assigned to you:\n{}\n\nCreated by you:\n{}",
+            my_work
+                .assigned_issues
+                .iter()
+                .map(|i| format!("{}: {}", i.identifier, i.title))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            my_work
+                .created_issues
+                .iter()
+                .map(|i| format!("{}: {}", i.identifier, i.title))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+    println!("{output}");
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_search_command(
+    client: &LinearClient,
+    query: String,
+    issues_only: bool,
+    docs_only: bool,
+    projects_only: bool,
+    limit: i32,
+    json: bool,
+    pretty: bool,
+    include_archived: bool,
+    use_color: bool,
+    is_interactive: bool,
+) -> Result<()> {
+    use crate::search::{search, SearchOptions};
+
+    let spinner = SpinnerGuard::new("Searching...", is_interactive);
+
+    let options = SearchOptions {
+        query,
+        issues_only,
+        docs_only,
+        projects_only,
+        limit,
+        include_archived,
+    };
+
+    let result = match search(client, options).await {
+        Ok(result) => {
+            drop(spinner);
+            result
+        }
+        Err(e) => {
+            drop(spinner);
+            display_error(&e, use_color);
+            std::process::exit(1);
+        }
+    };
+
+    if json {
+        let output = if pretty {
+            match serde_json::to_string_pretty(&result) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            match serde_json::to_string(&result) {
+                Ok(output) => output,
+                Err(e) => {
+                    display_error(&LinearError::from(e), use_color);
+                    std::process::exit(1);
+                }
+            }
+        };
+        println!("{output}");
+    } else {
+        let has_results = !result.issues.is_empty()
+            || !result.documents.is_empty()
+            || !result.projects.is_empty();
+
+        if !has_results {
+            if is_interactive {
+                println!("No results found.");
+            }
+        } else {
+            if !result.issues.is_empty() {
+                println!("Issues:");
+                for issue in &result.issues {
+                    println!("  {}: {}", issue.identifier, issue.title);
+                }
+                if !result.documents.is_empty() || !result.projects.is_empty() {
+                    println!();
+                }
+            }
+
+            if !result.documents.is_empty() {
+                println!("Documents:");
+                for doc in &result.documents {
+                    println!("  {}: {}", doc.title, doc.url);
+                }
+                if !result.projects.is_empty() {
+                    println!();
+                }
+            }
+
+            if !result.projects.is_empty() {
+                println!("Projects:");
+                for project in &result.projects {
+                    println!("  {}: {}", project.name, project.url);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Apply configuration defaults to CLI arguments where not explicitly provided
 fn apply_config_defaults(cli: &mut Cli, config: &Config) {
     match &mut cli.command {
@@ -1354,90 +1809,21 @@ async fn run_async_commands(
             status,
             team,
         } => {
-            let filters = if assignee.is_some() || status.is_some() || team.is_some() {
-                Some(IssueFilters {
-                    assignee,
-                    status,
-                    team,
-                })
-            } else {
-                None
-            };
-
-            let spinner = SpinnerGuard::new("Fetching issues...", is_interactive);
-            let issues = match client.list_issues_filtered(limit, filters).await {
-                Ok(issues) => {
-                    drop(spinner);
-                    issues
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            if issues.is_empty() && !json && is_interactive {
-                println!("No issues found.");
-            } else if !issues.is_empty() {
-                let output = if json {
-                    let formatter = JsonFormatter::new(pretty);
-                    match formatter.format_issues(&issues) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&e, use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    let formatter = TableFormatter::new_with_interactive(use_color, is_interactive);
-                    match formatter.format_issues(&issues) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&e, use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                };
-                println!("{output}");
-            }
+            handle_issues_command(
+                &client,
+                limit,
+                json,
+                pretty,
+                assignee,
+                status,
+                team,
+                use_color,
+                is_interactive,
+            )
+            .await?;
         }
         Commands::Issue { id, json, raw } => {
-            let spinner = SpinnerGuard::new(&format!("Fetching issue {id}..."), is_interactive);
-            match client.get_issue(id).await {
-                Ok(issue) => {
-                    drop(spinner);
-                    let output = if json {
-                        let formatter = JsonFormatter::new(false);
-                        match formatter.format_detailed_issue(&issue) {
-                            Ok(output) => output,
-                            Err(e) => {
-                                display_error(&e, use_color);
-                                std::process::exit(1);
-                            }
-                        }
-                    } else {
-                        let formatter =
-                            TableFormatter::new_with_interactive(use_color, is_interactive);
-                        // Use TTY detection for rich formatting, allow --raw to override
-                        let use_rich_formatting = is_interactive && !raw;
-
-                        match formatter.format_detailed_issue_rich(&issue, use_rich_formatting) {
-                            Ok(output) => output,
-                            Err(e) => {
-                                display_error(&e, use_color);
-                                std::process::exit(1);
-                            }
-                        }
-                    };
-                    println!("{output}");
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            }
+            handle_issue_detail_command(&client, id, json, raw, use_color, is_interactive).await?;
         }
         Commands::Create {
             title,
@@ -1472,41 +1858,7 @@ async fn run_async_commands(
             handle_create_command(&client, args, use_color, is_interactive).await?;
         }
         Commands::Status { verbose } => {
-            let spinner = SpinnerGuard::new("Checking Linear connection...", is_interactive);
-            match client.execute_viewer_query().await {
-                Ok(viewer_data) => {
-                    drop(spinner);
-                    if is_interactive {
-                        if use_color {
-                            println!("{} Connected to Linear", "✓".green());
-                        } else {
-                            println!("✓ Connected to Linear");
-                        }
-
-                        if verbose {
-                            println!();
-                            println!(
-                                "User: {} ({})",
-                                viewer_data.viewer.name, viewer_data.viewer.email
-                            );
-                            println!("User ID: {}", viewer_data.viewer.id);
-                        }
-                    }
-                }
-                Err(e) => {
-                    drop(spinner);
-                    if is_interactive {
-                        if use_color {
-                            println!("{} Failed to connect to Linear", "✗".red());
-                        } else {
-                            println!("✗ Failed to connect to Linear");
-                        }
-                        println!();
-                    }
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            }
+            handle_status_command(&client, verbose, use_color, is_interactive).await?;
         }
         #[cfg(feature = "oauth")]
         Commands::Login { .. } | Commands::Logout => {
@@ -1568,74 +1920,10 @@ async fn run_async_commands(
             json,
             pretty: _,
         } => {
-            let spinner = SpinnerGuard::new("Fetching projects...", is_interactive);
-            let projects = match client.list_projects(limit).await {
-                Ok(projects) => {
-                    drop(spinner);
-                    projects
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            if projects.is_empty() && !json && is_interactive {
-                println!("No projects found.");
-            } else if !projects.is_empty() {
-                let output = if json {
-                    match serde_json::to_string_pretty(&projects) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&LinearError::from(e), use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    projects
-                        .iter()
-                        .map(|p| format!("{}: {} ({})", p.id, p.name, p.state))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                };
-                println!("{output}");
-            }
+            handle_projects_command(&client, limit, json, use_color, is_interactive).await?;
         }
         Commands::Teams { json, pretty: _ } => {
-            let spinner = SpinnerGuard::new("Fetching teams...", is_interactive);
-            let teams = match client.list_teams().await {
-                Ok(teams) => {
-                    drop(spinner);
-                    teams
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            if teams.is_empty() && !json && is_interactive {
-                println!("No teams found.");
-            } else if !teams.is_empty() {
-                let output = if json {
-                    match serde_json::to_string_pretty(&teams) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&LinearError::from(e), use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    teams
-                        .iter()
-                        .map(|t| format!("{}: {} ({} members)", t.key, t.name, t.members.len()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                };
-                println!("{output}");
-            }
+            handle_teams_command(&client, json, use_color, is_interactive).await?;
         }
         Commands::Comments {
             id,
@@ -1643,90 +1931,14 @@ async fn run_async_commands(
             json,
             pretty: _,
         } => {
-            let spinner = SpinnerGuard::new("Fetching comments...", is_interactive);
-            let issue_with_comments = match client.get_issue_comments(&id, limit).await {
-                Ok(result) => {
-                    drop(spinner);
-                    result
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            if issue_with_comments.comments.is_empty() && !json && is_interactive {
-                println!("No comments found for issue {id}.");
-            } else {
-                let output = if json {
-                    match serde_json::to_string_pretty(&issue_with_comments) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&LinearError::from(e), use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    format!(
-                        "Issue: {} - {}\n\nComments:\n{}",
-                        issue_with_comments.identifier,
-                        issue_with_comments.title,
-                        issue_with_comments
-                            .comments
-                            .iter()
-                            .map(|c| format!("{}: {}", c.user.name, c.body))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                };
-                println!("{output}");
-            }
+            handle_comments_command(&client, id, limit, json, use_color, is_interactive).await?;
         }
         Commands::MyWork {
             limit,
             json,
             pretty: _,
         } => {
-            let spinner = SpinnerGuard::new("Fetching your work...", is_interactive);
-            let my_work = match client.get_my_work(limit).await {
-                Ok(work) => {
-                    drop(spinner);
-                    work
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            let output = if json {
-                match serde_json::to_string_pretty(&my_work) {
-                    Ok(output) => output,
-                    Err(e) => {
-                        display_error(&LinearError::from(e), use_color);
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                format!(
-                    "Assigned to you:\n{}\n\nCreated by you:\n{}",
-                    my_work
-                        .assigned_issues
-                        .iter()
-                        .map(|i| format!("{}: {}", i.identifier, i.title))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    my_work
-                        .created_issues
-                        .iter()
-                        .map(|i| format!("{}: {}", i.identifier, i.title))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            };
-            println!("{output}");
+            handle_mywork_command(&client, limit, json, use_color, is_interactive).await?;
         }
         Commands::Search {
             query,
@@ -1738,89 +1950,20 @@ async fn run_async_commands(
             pretty,
             include_archived,
         } => {
-            use crate::search::{search, SearchOptions};
-
-            let spinner = SpinnerGuard::new("Searching...", is_interactive);
-
-            let options = SearchOptions {
+            handle_search_command(
+                &client,
                 query,
                 issues_only,
                 docs_only,
                 projects_only,
                 limit,
+                json,
+                pretty,
                 include_archived,
-            };
-
-            let result = match search(&client, options).await {
-                Ok(result) => {
-                    drop(spinner);
-                    result
-                }
-                Err(e) => {
-                    drop(spinner);
-                    display_error(&e, use_color);
-                    std::process::exit(1);
-                }
-            };
-
-            if json {
-                let output = if pretty {
-                    match serde_json::to_string_pretty(&result) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&LinearError::from(e), use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    match serde_json::to_string(&result) {
-                        Ok(output) => output,
-                        Err(e) => {
-                            display_error(&LinearError::from(e), use_color);
-                            std::process::exit(1);
-                        }
-                    }
-                };
-                println!("{output}");
-            } else {
-                // Display grouped results
-                let has_results = !result.issues.is_empty()
-                    || !result.documents.is_empty()
-                    || !result.projects.is_empty();
-
-                if !has_results {
-                    if is_interactive {
-                        println!("No results found.");
-                    }
-                } else {
-                    if !result.issues.is_empty() {
-                        println!("Issues:");
-                        for issue in &result.issues {
-                            println!("  {}: {}", issue.identifier, issue.title);
-                        }
-                        if !result.documents.is_empty() || !result.projects.is_empty() {
-                            println!();
-                        }
-                    }
-
-                    if !result.documents.is_empty() {
-                        println!("Documents:");
-                        for doc in &result.documents {
-                            println!("  {}: {}", doc.title, doc.url);
-                        }
-                        if !result.projects.is_empty() {
-                            println!();
-                        }
-                    }
-
-                    if !result.projects.is_empty() {
-                        println!("Projects:");
-                        for project in &result.projects {
-                            println!("  {}: {}", project.name, project.url);
-                        }
-                    }
-                }
-            }
+                use_color,
+                is_interactive,
+            )
+            .await?;
         }
         Commands::Completions { .. } => {
             // This should never be reached because completions are handled synchronously above
@@ -1829,1131 +1972,4 @@ async fn run_async_commands(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::CommandFactory;
-    use serial_test::serial;
-
-    #[test]
-    fn test_cli_structure() {
-        let cli = Cli::command();
-
-        // Verify basic structure
-        assert_eq!(cli.get_name(), "linear");
-
-        // Check that we have the issues subcommand
-        let issues_cmd = cli
-            .find_subcommand("issues")
-            .expect("issues command should exist");
-        assert_eq!(issues_cmd.get_name(), "issues");
-
-        // Check that we have the issue subcommand
-        let issue_cmd = cli
-            .find_subcommand("issue")
-            .expect("issue command should exist");
-        assert_eq!(issue_cmd.get_name(), "issue");
-
-        // Check the limit argument
-        let limit_arg = issues_cmd
-            .get_arguments()
-            .find(|arg| arg.get_id() == "limit")
-            .expect("limit argument should exist");
-        assert!(!limit_arg.is_required_set());
-
-        // Check the id argument for issue command
-        let id_arg = issue_cmd
-            .get_arguments()
-            .find(|arg| arg.get_id() == "id")
-            .expect("id argument should exist");
-        assert!(id_arg.is_required_set());
-    }
-
-    #[test]
-    fn test_parse_issues_command() {
-        use clap::Parser;
-
-        // Test default limit
-        let cli = Cli::try_parse_from(["linear", "issues"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                limit,
-                json,
-                pretty,
-                assignee: _,
-                status: _,
-                team: _,
-            } => {
-                assert_eq!(limit, 20);
-                assert!(!json);
-                assert!(!pretty);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test custom limit
-        let cli = Cli::try_parse_from(["linear", "issues", "--limit", "5"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                limit,
-                json,
-                pretty,
-                assignee: _,
-                status: _,
-                team: _,
-            } => {
-                assert_eq!(limit, 5);
-                assert!(!json);
-                assert!(!pretty);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test short form
-        let cli = Cli::try_parse_from(["linear", "issues", "-l", "10"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                limit,
-                json,
-                pretty,
-                assignee: _,
-                status: _,
-                team: _,
-            } => {
-                assert_eq!(limit, 10);
-                assert!(!json);
-                assert!(!pretty);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test JSON flag
-        let cli = Cli::try_parse_from(["linear", "issues", "--json"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                limit,
-                json,
-                pretty,
-                assignee: _,
-                status: _,
-                team: _,
-            } => {
-                assert_eq!(limit, 20);
-                assert!(json);
-                assert!(!pretty);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test JSON with pretty flag
-        let cli = Cli::try_parse_from(["linear", "issues", "--json", "--pretty"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                limit,
-                json,
-                pretty,
-                assignee: _,
-                status: _,
-                team: _,
-            } => {
-                assert_eq!(limit, 20);
-                assert!(json);
-                assert!(pretty);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test pretty flag requires json (should fail)
-        let result = Cli::try_parse_from(["linear", "issues", "--pretty"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_issue_command() {
-        use clap::Parser;
-
-        // Test basic issue command
-        let cli = Cli::try_parse_from(["linear", "issue", "ENG-123"]).unwrap();
-        match cli.command {
-            Commands::Issue { id, json, raw, .. } => {
-                assert_eq!(id, "ENG-123");
-                assert!(!json);
-                assert!(!raw);
-            }
-            #[cfg(feature = "oauth")]
-            Commands::Projects { .. } => panic!("Expected Issue command"),
-            Commands::Teams { .. } => panic!("Expected Issue command"),
-            Commands::Comments { .. } => panic!("Expected Issue command"),
-            Commands::MyWork { .. } => panic!("Expected Issue command"),
-            Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issue command")
-            }
-            _ => panic!("Expected Issue command"),
-        }
-
-        // Test issue command with JSON
-        let cli = Cli::try_parse_from(["linear", "issue", "ENG-456", "--json"]).unwrap();
-        match cli.command {
-            Commands::Issue { id, json, raw, .. } => {
-                assert_eq!(id, "ENG-456");
-                assert!(json);
-                assert!(!raw);
-            }
-            #[cfg(feature = "oauth")]
-            Commands::Projects { .. } => panic!("Expected Issue command"),
-            Commands::Teams { .. } => panic!("Expected Issue command"),
-            Commands::Comments { .. } => panic!("Expected Issue command"),
-            Commands::MyWork { .. } => panic!("Expected Issue command"),
-            Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issue command")
-            }
-            _ => panic!("Expected Issue command"),
-        }
-
-        // Test issue command with UUID
-        let cli = Cli::try_parse_from(["linear", "issue", "abc-123-def-456"]).unwrap();
-        match cli.command {
-            Commands::Issue { id, json, raw, .. } => {
-                assert_eq!(id, "abc-123-def-456");
-                assert!(!json);
-                assert!(!raw);
-            }
-            #[cfg(feature = "oauth")]
-            Commands::Projects { .. } => panic!("Expected Issue command"),
-            Commands::Teams { .. } => panic!("Expected Issue command"),
-            Commands::Comments { .. } => panic!("Expected Issue command"),
-            Commands::MyWork { .. } => panic!("Expected Issue command"),
-            Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issue command")
-            }
-            _ => panic!("Expected Issue command"),
-        }
-
-        // Test issue command with --raw flag
-        let cli = Cli::try_parse_from(["linear", "issue", "ENG-789", "--raw"]).unwrap();
-        match cli.command {
-            Commands::Issue { id, json, raw, .. } => {
-                assert_eq!(id, "ENG-789");
-                assert!(!json);
-                assert!(raw);
-            }
-            #[cfg(feature = "oauth")]
-            Commands::Projects { .. } => panic!("Expected Issue command"),
-            Commands::Teams { .. } => panic!("Expected Issue command"),
-            Commands::Comments { .. } => panic!("Expected Issue command"),
-            Commands::MyWork { .. } => panic!("Expected Issue command"),
-            Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issue command")
-            }
-            _ => panic!("Expected Issue command"),
-        }
-
-        // Test issue command with both --json and --raw flags
-        let cli = Cli::try_parse_from(["linear", "issue", "ENG-999", "--json", "--raw"]).unwrap();
-        match cli.command {
-            Commands::Issue { id, json, raw, .. } => {
-                assert_eq!(id, "ENG-999");
-                assert!(json);
-                assert!(raw);
-            }
-            #[cfg(feature = "oauth")]
-            Commands::Projects { .. } => panic!("Expected Issue command"),
-            Commands::Teams { .. } => panic!("Expected Issue command"),
-            Commands::Comments { .. } => panic!("Expected Issue command"),
-            Commands::MyWork { .. } => panic!("Expected Issue command"),
-            Commands::Search { .. } => panic!("Expected Issue command"),
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issue command")
-            }
-            _ => panic!("Expected Issue command"),
-        }
-
-        // Test issue command without ID (should fail)
-        let result = Cli::try_parse_from(["linear", "issue"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_filter_arguments() {
-        use clap::Parser;
-
-        // Test assignee filter
-        let cli = Cli::try_parse_from(["linear", "issues", "--assignee", "me"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                assignee,
-                status,
-                team,
-                ..
-            } => {
-                assert_eq!(assignee, Some("me".to_string()));
-                assert_eq!(status, None);
-                assert_eq!(team, None);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test status filter
-        let cli = Cli::try_parse_from(["linear", "issues", "--status", "done"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                assignee,
-                status,
-                team,
-                ..
-            } => {
-                assert_eq!(assignee, None);
-                assert_eq!(status, Some("done".to_string()));
-                assert_eq!(team, None);
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test team filter
-        let cli = Cli::try_parse_from(["linear", "issues", "--team", "ENG"]).unwrap();
-        match cli.command {
-            Commands::Issues {
-                assignee,
-                status,
-                team,
-                ..
-            } => {
-                assert_eq!(assignee, None);
-                assert_eq!(status, None);
-                assert_eq!(team, Some("ENG".to_string()));
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-
-        // Test combined filters
-        let cli = Cli::try_parse_from([
-            "linear",
-            "issues",
-            "--assignee",
-            "me",
-            "--status",
-            "in progress",
-            "--team",
-            "ENG",
-        ])
-        .unwrap();
-        match cli.command {
-            Commands::Issues {
-                assignee,
-                status,
-                team,
-                ..
-            } => {
-                assert_eq!(assignee, Some("me".to_string()));
-                assert_eq!(status, Some("in progress".to_string()));
-                assert_eq!(team, Some("ENG".to_string()));
-            }
-            Commands::Issue { .. } => panic!("Expected Issues command"),
-            Commands::Create { .. } => panic!("Expected Issues command"),
-            Commands::Update { .. } => panic!("Expected Issues command"),
-            Commands::Close { .. } => panic!("Expected Issues command"),
-            Commands::Reopen { .. } => panic!("Expected Issues command"),
-            Commands::Comment { .. } => panic!("Expected Issues command"),
-            Commands::Attach { .. } => panic!("Expected Issues command"),
-            Commands::Relate { .. } => panic!("Expected Issues command"),
-            Commands::Projects { .. } => panic!("Expected Issues command"),
-            Commands::Teams { .. } => panic!("Expected Issues command"),
-            Commands::Comments { .. } => panic!("Expected Issues command"),
-            Commands::MyWork { .. } => panic!("Expected Issues command"),
-            Commands::Search { .. } => panic!("Expected Issues command"),
-            Commands::Status { .. } => panic!("Expected Issues command"),
-            #[cfg(feature = "oauth")]
-            Commands::Login { .. } | Commands::Logout | Commands::Completions { .. } => {
-                panic!("Expected Issues command")
-            }
-        }
-    }
-
-    #[test]
-    fn test_version_command() {
-        use clap::Parser;
-        use std::process::Command;
-
-        // Test that version command parses correctly
-        let result = Cli::try_parse_from(["linear", "--version"]);
-        // This will fail because --version is handled by clap before we get the result
-        // But we can test that it doesn't conflict with other parsing
-        assert!(result.is_err()); // clap exits early for --version
-
-        // Test that version is included in help output
-        let output = Command::new("cargo")
-            .args(["run", "-p", "linear-cli", "--", "--help"])
-            .output()
-            .unwrap();
-        let help_output = std::str::from_utf8(&output.stdout).unwrap();
-        assert!(help_output.contains("--version") || help_output.contains("-V"));
-    }
-
-    #[test]
-    fn test_deferred_authentication() {
-        use clap::Parser;
-
-        // Test that help commands can be parsed without requiring authentication
-        // (Authentication is only checked at runtime when making API calls)
-
-        // Help command should parse successfully
-        let cli = Cli::try_parse_from(["linear", "--help"]);
-        assert!(cli.is_err()); // clap exits early for --help
-
-        // Subcommand help should parse successfully
-        let cli = Cli::try_parse_from(["linear", "issues", "--help"]);
-        assert!(cli.is_err()); // clap exits early for --help
-
-        // Regular commands should parse successfully (auth checked later)
-        let cli = Cli::try_parse_from(["linear", "issues"]).unwrap();
-        match cli.command {
-            Commands::Issues { .. } => {} // Success - parsing works without auth
-            _ => panic!("Expected Issues command"),
-        }
-
-        let cli = Cli::try_parse_from(["linear", "status"]).unwrap();
-        match cli.command {
-            Commands::Status { .. } => {} // Success - parsing works without auth
-            _ => panic!("Expected Status command"),
-        }
-
-        let cli = Cli::try_parse_from(["linear", "create", "--title", "Test"]).unwrap();
-        match cli.command {
-            Commands::Create { .. } => {} // Success - parsing works without auth
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_determine_use_color_with_tty() {
-        // Save original env vars
-        let original_no_color = std::env::var("NO_COLOR").ok();
-        let original_term = std::env::var("TERM").ok();
-
-        unsafe {
-            // Clear env vars to test default behavior
-            std::env::remove_var("NO_COLOR");
-            std::env::remove_var("TERM");
-
-            // Mock a TTY scenario (we can't directly mock IsTerminal)
-            // but we can test the logic separately
-            let use_color = determine_use_color(false, false, true);
-            assert!(use_color);
-
-            // Test with no-color flag
-            let use_color = determine_use_color(true, false, true);
-            assert!(!use_color);
-
-            // Test with NO_COLOR env var
-            std::env::set_var("NO_COLOR", "1");
-            let use_color = determine_use_color(false, false, true);
-            assert!(!use_color);
-            std::env::remove_var("NO_COLOR");
-
-            // Test with TERM=dumb
-            std::env::set_var("TERM", "dumb");
-            let use_color = determine_use_color(false, false, true);
-            assert!(!use_color);
-
-            // Test non-TTY (piped/redirected)
-            std::env::remove_var("TERM");
-            let use_color = determine_use_color(false, false, false);
-            assert!(!use_color);
-
-            // Test force-color overrides non-TTY
-            let use_color = determine_use_color(false, true, false);
-            assert!(use_color);
-
-            // Restore original env vars
-            if let Some(val) = original_no_color {
-                std::env::set_var("NO_COLOR", val);
-            } else {
-                std::env::remove_var("NO_COLOR");
-            }
-            if let Some(val) = original_term {
-                std::env::set_var("TERM", val);
-            } else {
-                std::env::remove_var("TERM");
-            }
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_determine_use_color_priority() {
-        // Test that flags take precedence over env vars and TTY detection
-        let original_no_color = std::env::var("NO_COLOR").ok();
-        let original_term = std::env::var("TERM").ok();
-
-        unsafe {
-            // Test flag overrides everything
-            std::env::remove_var("NO_COLOR");
-            std::env::remove_var("TERM");
-            let use_color = determine_use_color(true, false, true);
-            assert!(!use_color, "--no-color flag should override TTY detection");
-
-            // Test NO_COLOR env var overrides TTY
-            std::env::set_var("NO_COLOR", "1");
-            let use_color = determine_use_color(false, false, true);
-            assert!(!use_color, "NO_COLOR env should override TTY detection");
-
-            // Test TERM=dumb overrides TTY
-            std::env::remove_var("NO_COLOR");
-            std::env::set_var("TERM", "dumb");
-            let use_color = determine_use_color(false, false, true);
-            assert!(!use_color, "TERM=dumb should override TTY detection");
-
-            // Test force-color overrides everything
-            std::env::set_var("NO_COLOR", "1");
-            std::env::set_var("TERM", "dumb");
-            let use_color = determine_use_color(false, true, false);
-            assert!(use_color, "--force-color should override everything");
-
-            // Restore env vars
-            if let Some(val) = original_no_color {
-                std::env::set_var("NO_COLOR", val);
-            } else {
-                std::env::remove_var("NO_COLOR");
-            }
-            if let Some(val) = original_term {
-                std::env::set_var("TERM", val);
-            } else {
-                std::env::remove_var("TERM");
-            }
-        }
-    }
-
-    #[test]
-    fn test_force_color_flag() {
-        use clap::Parser;
-
-        // Test force-color flag
-        let cli = Cli::try_parse_from(["linear", "--force-color", "issues"]).unwrap();
-        assert!(cli.force_color);
-        assert!(!cli.no_color);
-
-        // Test that force-color and no-color conflict
-        let result = Cli::try_parse_from(["linear", "--force-color", "--no-color", "issues"]);
-        assert!(result.is_err());
-
-        // Test no-color flag still works
-        let cli = Cli::try_parse_from(["linear", "--no-color", "issues"]).unwrap();
-        assert!(!cli.force_color);
-        assert!(cli.no_color);
-    }
-
-    #[test]
-    fn test_limit_validation() {
-        use clap::Parser;
-
-        // Test that limit must be at least 1
-        let result = Cli::try_parse_from(["linear", "issues", "--limit", "0"]);
-        assert!(result.is_err());
-
-        // Test that negative limits are rejected
-        let result = Cli::try_parse_from(["linear", "issues", "--limit=-5"]);
-        assert!(result.is_err());
-
-        // Test that valid limits work
-        let cli = Cli::try_parse_from(["linear", "issues", "--limit", "1"]).unwrap();
-        match cli.command {
-            Commands::Issues { limit, .. } => {
-                assert_eq!(limit, 1);
-            }
-            _ => panic!("Expected Issues command"),
-        }
-    }
-
-    #[test]
-    fn test_json_output_can_be_parsed() {
-        use crate::output::{JsonFormatter, OutputFormat};
-        use linear_sdk::Issue;
-
-        // Create test issues
-        let issues = vec![
-            Issue {
-                id: "1".to_string(),
-                identifier: "ENG-123".to_string(),
-                title: "Test issue".to_string(),
-                status: "Todo".to_string(),
-                state_id: "state-todo-123".to_string(),
-                assignee: Some("Alice".to_string()),
-                assignee_id: Some("user-1".to_string()),
-                team: Some("ENG".to_string()),
-                team_id: "team-eng-123".to_string(),
-            },
-            Issue {
-                id: "2".to_string(),
-                identifier: "ENG-124".to_string(),
-                title: "Another issue".to_string(),
-                status: "Done".to_string(),
-                state_id: "state-done-124".to_string(),
-                assignee: None,
-                assignee_id: None,
-                team: Some("ENG".to_string()),
-                team_id: "team-eng-124".to_string(),
-            },
-        ];
-
-        // Test compact JSON
-        let formatter = JsonFormatter::new(false);
-        let output = formatter.format_issues(&issues).unwrap();
-
-        // Verify it can be parsed back
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap();
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0]["identifier"], "ENG-123");
-        assert_eq!(parsed[1]["identifier"], "ENG-124");
-
-        // Test pretty JSON
-        let formatter = JsonFormatter::new(true);
-        let output = formatter.format_issues(&issues).unwrap();
-
-        // Verify pretty JSON can also be parsed back
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(&output).unwrap();
-        assert_eq!(parsed.len(), 2);
-
-        // Verify it's actually pretty printed (contains newlines)
-        assert!(output.contains('\n'));
-    }
-
-    // CREATE COMMAND TESTS - Testing CLI parsing and validation
-
-    #[test]
-    fn test_parse_create_command_minimal() {
-        use clap::Parser;
-
-        // Test minimal create command with just title and team
-        let cli =
-            Cli::try_parse_from(["linear", "create", "--title", "Test Issue", "--team", "ENG"])
-                .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description,
-                team,
-                assignee,
-                priority,
-                open,
-                dry_run,
-                ..
-            } => {
-                assert_eq!(title, Some("Test Issue".to_string()));
-                assert_eq!(description, None);
-                assert_eq!(team, Some("ENG".to_string()));
-                assert_eq!(assignee, None);
-                assert_eq!(priority, None);
-                assert!(!open);
-                assert!(!dry_run);
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_all_fields() {
-        use clap::Parser;
-
-        // Test create command with all possible arguments
-        let cli = Cli::try_parse_from([
-            "linear",
-            "create",
-            "--title",
-            "Complete Test Issue",
-            "--description",
-            "A complete test description",
-            "--team",
-            "DESIGN",
-            "--assignee",
-            "me",
-            "--priority",
-            "2",
-            "--open",
-            "--dry-run",
-        ])
-        .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description,
-                team,
-                assignee,
-                priority,
-                open,
-                dry_run,
-                ..
-            } => {
-                assert_eq!(title, Some("Complete Test Issue".to_string()));
-                assert_eq!(description, Some("A complete test description".to_string()));
-                assert_eq!(team, Some("DESIGN".to_string()));
-                assert_eq!(assignee, Some("me".to_string()));
-                assert_eq!(priority, Some(2));
-                assert!(open);
-                assert!(dry_run);
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_short_flags() {
-        use clap::Parser;
-
-        // Test create command with short flag aliases where available
-        let cli = Cli::try_parse_from([
-            "linear",
-            "create",
-            "--title",
-            "Short Flag Test",
-            "--team",
-            "ENG",
-            "--priority",
-            "1",
-        ])
-        .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description: _,
-                team,
-                assignee: _,
-                priority,
-                open: _,
-                dry_run: _,
-                ..
-            } => {
-                assert_eq!(title, Some("Short Flag Test".to_string()));
-                assert_eq!(team, Some("ENG".to_string()));
-                assert_eq!(priority, Some(1));
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_interactive_mode() {
-        use clap::Parser;
-
-        // Test create command without any arguments (should trigger interactive mode)
-        let cli = Cli::try_parse_from(["linear", "create"]).unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description,
-                team,
-                assignee,
-                priority,
-                open,
-                dry_run,
-                ..
-            } => {
-                assert_eq!(title, None);
-                assert_eq!(description, None);
-                assert_eq!(team, None);
-                assert_eq!(assignee, None);
-                assert_eq!(priority, None);
-                assert!(!open);
-                assert!(!dry_run);
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_priority_validation() {
-        use clap::Parser;
-
-        // Test valid priority values
-        for priority in 1..=4 {
-            let cli = Cli::try_parse_from([
-                "linear",
-                "create",
-                "--title",
-                "Priority Test",
-                "--team",
-                "ENG",
-                "--priority",
-                &priority.to_string(),
-            ])
-            .unwrap();
-
-            match cli.command {
-                Commands::Create { priority: p, .. } => {
-                    assert_eq!(p, Some(priority));
-                }
-                _ => panic!("Expected Create command"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_invalid_priority() {
-        use clap::Parser;
-
-        // Test invalid priority values (should fail parsing)
-        for invalid_priority in [0, 5, 10] {
-            let result = Cli::try_parse_from([
-                "linear",
-                "create",
-                "--title",
-                "Priority Test",
-                "--team",
-                "ENG",
-                "--priority",
-                &invalid_priority.to_string(),
-            ]);
-
-            assert!(
-                result.is_err(),
-                "Priority {invalid_priority} should be invalid"
-            );
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_special_assignees() {
-        use clap::Parser;
-
-        // Test special assignee values
-        let special_assignees = ["me", "unassigned"];
-
-        for assignee in &special_assignees {
-            let cli = Cli::try_parse_from([
-                "linear",
-                "create",
-                "--title",
-                "Assignee Test",
-                "--team",
-                "ENG",
-                "--assignee",
-                assignee,
-            ])
-            .unwrap();
-
-            match cli.command {
-                Commands::Create { assignee: a, .. } => {
-                    assert_eq!(a, Some(assignee.to_string()));
-                }
-                _ => panic!("Expected Create command"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_create_command_args_struct() {
-        // Test the CreateCommandArgs structure used internally
-        let args = CreateCommandArgs {
-            title: Some("Test Title".to_string()),
-            description: Some("Test Description".to_string()),
-            team: Some("ENG".to_string()),
-            assignee: Some("me".to_string()),
-            priority: Some(2),
-            estimate: None,
-            labels: vec![],
-            cycle: None,
-            project: None,
-            project_id: None,
-            from_file: None,
-            open: true,
-            dry_run: false,
-        };
-
-        assert_eq!(args.title, Some("Test Title".to_string()));
-        assert_eq!(args.description, Some("Test Description".to_string()));
-        assert_eq!(args.team, Some("ENG".to_string()));
-        assert_eq!(args.assignee, Some("me".to_string()));
-        assert_eq!(args.priority, Some(2));
-        assert_eq!(args.from_file, None);
-        assert!(args.open);
-        assert!(!args.dry_run);
-    }
-
-    #[test]
-    fn test_parse_create_command_whitespace_handling() {
-        use clap::Parser;
-
-        // Test that whitespace in arguments is properly handled
-        let cli = Cli::try_parse_from([
-            "linear",
-            "create",
-            "--title",
-            "  Title with spaces  ",
-            "--description",
-            "  Description with\nmultiple lines  ",
-            "--team",
-            " ENG ",
-            "--assignee",
-            " test@example.com ",
-        ])
-        .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description,
-                team,
-                assignee,
-                ..
-            } => {
-                // Arguments should preserve whitespace as-is (trimming is handled later)
-                assert_eq!(title, Some("  Title with spaces  ".to_string()));
-                assert_eq!(
-                    description,
-                    Some("  Description with\nmultiple lines  ".to_string())
-                );
-                assert_eq!(team, Some(" ENG ".to_string()));
-                assert_eq!(assignee, Some(" test@example.com ".to_string()));
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_from_file() {
-        use clap::Parser;
-
-        // Test create command with --from-file flag
-        let cli = Cli::try_parse_from(["linear", "create", "--from-file", "issue.md"]).unwrap();
-
-        match cli.command {
-            Commands::Create { from_file, .. } => {
-                assert_eq!(from_file, Some("issue.md".to_string()));
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_from_file_short() {
-        use clap::Parser;
-
-        // Test create command with -f short flag
-        let cli = Cli::try_parse_from(["linear", "create", "-f", "/path/to/issue.md"]).unwrap();
-
-        match cli.command {
-            Commands::Create { from_file, .. } => {
-                assert_eq!(from_file, Some("/path/to/issue.md".to_string()));
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_from_file_with_other_args() {
-        use clap::Parser;
-
-        // Test create command with --from-file and other arguments (CLI args should override)
-        let cli = Cli::try_parse_from([
-            "linear",
-            "create",
-            "--from-file",
-            "issue.md",
-            "--title",
-            "Override Title",
-            "--team",
-            "OVERRIDE",
-            "--dry-run",
-        ])
-        .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                from_file,
-                title,
-                team,
-                dry_run,
-                ..
-            } => {
-                assert_eq!(from_file, Some("issue.md".to_string()));
-                assert_eq!(title, Some("Override Title".to_string()));
-                assert_eq!(team, Some("OVERRIDE".to_string()));
-                assert!(dry_run);
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
-
-    #[test]
-    fn test_parse_create_command_empty_values() {
-        use clap::Parser;
-
-        // Test parsing with empty string values
-        let cli = Cli::try_parse_from([
-            "linear",
-            "create",
-            "--title",
-            "",
-            "--description",
-            "",
-            "--team",
-            "",
-            "--assignee",
-            "",
-        ])
-        .unwrap();
-
-        match cli.command {
-            Commands::Create {
-                title,
-                description,
-                team,
-                assignee,
-                ..
-            } => {
-                // Empty strings should still be parsed as Some("")
-                assert_eq!(title, Some("".to_string()));
-                assert_eq!(description, Some("".to_string()));
-                assert_eq!(team, Some("".to_string()));
-                assert_eq!(assignee, Some("".to_string()));
-            }
-            _ => panic!("Expected Create command"),
-        }
-    }
 }

@@ -5,8 +5,8 @@
 pub mod retry {
     use std::time::Duration;
 
-    /// Maximum number of retry attempts
-    pub const MAX_RETRIES: u32 = 3;
+    /// Maximum number of attempts (including initial)
+    pub const MAX_ATTEMPTS: u32 = 3;
 
     /// Initial delay before first retry
     pub const INITIAL_DELAY: Duration = Duration::from_millis(100);
@@ -41,6 +41,15 @@ pub mod urls {
     pub const OAUTH_CALLBACK_BASE: &str = "http://localhost";
 }
 
+/// Default status state names
+pub mod status {
+    /// Default "Done" state name for closing issues
+    pub const DEFAULT_DONE_STATE: &str = "Done";
+
+    /// Default "Todo" state name for reopening issues
+    pub const DEFAULT_TODO_STATE: &str = "Todo";
+}
+
 /// Error handling constants
 pub mod errors {
     /// Default wait time for rate limit errors (in seconds)
@@ -61,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_retry_constants() {
-        assert_eq!(retry::MAX_RETRIES, 3);
+        assert_eq!(retry::MAX_ATTEMPTS, 3);
         assert_eq!(retry::INITIAL_DELAY, Duration::from_millis(100));
         assert_eq!(retry::MAX_DELAY, Duration::from_secs(10));
         assert_eq!(retry::BACKOFF_MULTIPLIER, 2.0);

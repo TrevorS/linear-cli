@@ -189,11 +189,6 @@ impl<'a> InteractivePrompter<'a> {
         Ok(users)
     }
 
-    /// Create instance with smart defaults integration
-    pub fn new_with_defaults(client: &'a LinearClient) -> SdkResult<Self> {
-        Self::new(client)
-    }
-
     /// Collect all missing fields interactively
     pub async fn collect_create_input(
         &self,
@@ -537,28 +532,6 @@ impl<'a> InteractivePrompter<'a> {
         })
     }
 
-    /// Prompt for issue title
-    #[allow(dead_code)] // Individual prompt methods for future modular prompting
-    fn prompt_title(&self) -> SdkResult<String> {
-        let title: String = Input::new()
-            .with_prompt("Title")
-            .validate_with(|input: &String| -> Result<(), &str> {
-                if input.trim().is_empty() {
-                    Err("Title cannot be empty")
-                } else if input.len() > 255 {
-                    Err("Title must be 255 characters or less")
-                } else {
-                    Ok(())
-                }
-            })
-            .interact_text()
-            .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to read title: {e}"),
-            })?;
-
-        Ok(title.trim().to_string())
-    }
-
     /// Prompt for issue description
     fn prompt_description(&self) -> SdkResult<Option<String>> {
         let use_editor = Confirm::new()
@@ -600,39 +573,6 @@ impl<'a> InteractivePrompter<'a> {
                 Some(trimmed.to_string())
             })
         }
-    }
-
-    /// Prompt for team selection
-    #[allow(dead_code)] // Individual prompt methods for future modular prompting
-    async fn prompt_team(&self) -> SdkResult<String> {
-        let teams = self.get_teams_cached().await?;
-
-        if teams.is_empty() {
-            return Err(LinearError::InvalidInput {
-                message: "No teams found in your workspace".to_string(),
-            });
-        }
-
-        let team_names: Vec<String> = teams
-            .iter()
-            .map(|team| format!("{} ({})", team.name, team.key))
-            .collect();
-
-        let selection = Select::new()
-            .with_prompt("Select a team")
-            .items(&team_names)
-            .interact()
-            .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select team: {e}"),
-            })?;
-
-        Ok(teams[selection].id.clone())
-    }
-
-    /// Enhanced prompt for assignee with user search and team filtering
-    #[allow(dead_code)] // Individual prompt methods for future modular prompting
-    async fn prompt_assignee(&self) -> SdkResult<Option<String>> {
-        self.prompt_assignee_with_team_context(None).await
     }
 
     /// Enhanced prompt for assignee with optional team context for filtering
@@ -835,30 +775,6 @@ impl<'a> InteractivePrompter<'a> {
             })?;
 
         Ok(Some(user_id.trim().to_string()))
-    }
-
-    /// Prompt for priority
-    #[allow(dead_code)] // Individual prompt methods for future modular prompting
-    fn prompt_priority(&self) -> SdkResult<Option<i64>> {
-        let priorities = vec!["None", "1 - Urgent", "2 - High", "3 - Normal", "4 - Low"];
-
-        let selection = Select::new()
-            .with_prompt("Priority")
-            .items(&priorities)
-            .default(0) // Default to None
-            .interact()
-            .map_err(|e| LinearError::InvalidInput {
-                message: format!("Failed to select priority: {e}"),
-            })?;
-
-        Ok(match selection {
-            0 => None,
-            1 => Some(1),
-            2 => Some(2),
-            3 => Some(3),
-            4 => Some(4),
-            _ => unreachable!(),
-        })
     }
 
     /// Resolve team key or return team ID as-is if it's already a UUID
