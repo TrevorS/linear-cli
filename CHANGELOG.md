@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-18
+
+### Fixed
+- HTTP error responses now surface the API's response body (e.g. `Invalid scope: 'write' required`) instead of a bare `HTTP error: 400`, making auth/scope/validation failures diagnosable
+- OAuth login now requests scopes as a single comma-delimited value (`read,write`); Linear failed to parse the space-delimited form and silently issued tokens without `write`
+- `From<serde_json::Error>` preserves the underlying parse error message instead of discarding it
+- `From<reqwest::Error>` delegates status-code mapping to `from_status()` for consistent error classification
+- `RateLimit` help text reports the actual `reset_seconds` rather than a fixed "60 seconds"
+
+### Changed
+- Removed unreachable fallback in the retry loop (every attempt returns inside the match)
+- Extracted ~1,125 lines of unit tests from `main.rs` into `tests.rs` for faster incremental compilation (no behavior change)
+
+### Documentation
+- README: note that `write` scope is required for mutations like `relate`
+
 ## [0.3.0] - 2025-02-05
 
 ### Added

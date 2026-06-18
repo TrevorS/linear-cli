@@ -76,6 +76,11 @@ For development, add to `.env`:
 LINEAR_API_KEY=lin_api_xxxxx
 ```
 
+> **Scopes:** mutations that aren't issue/comment creation — such as `relate` (which calls
+> `issueRelationCreate`) — require the **`write`** scope. Create the key with full access (or
+> include `write`); a read- or create-only key returns `Invalid scope: 'write' required`.
+> OAuth logins request `read,write` automatically.
+
 ## Features
 
 - **Issue Management**: List, view, create, update, close, reopen, and attach URLs to issues
